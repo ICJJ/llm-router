@@ -37,6 +37,7 @@ def create_app() -> FastAPI:
         return response
 
     @application.post("/v1/chat/completions")
+    @application.post("/chat/completions")
     async def chat_completions(request: Request):  # pyright: ignore[reportUnusedFunction]
         global _request_count
         _request_count += 1
