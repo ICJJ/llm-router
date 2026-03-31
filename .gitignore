@@ -29,6 +29,8 @@ Thumbs.db
 
 # Temp/debug files
 _*.py
+!__main__.py
+!__init__.py
 debug_*.py
 *.bak
 *.orig
