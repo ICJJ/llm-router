@@ -657,44 +657,80 @@ async def _oai_stream_proxy(
 
                 fallback_module.record_success(current_model)
 
-                async for raw_line in resp.aiter_lines():
-                    line = raw_line.strip()
-                    if not line:
-                        continue
+                # Read full body to detect format (SSE vs raw JSON)
+                full_body = await resp.aread()
+                text = full_body.decode("utf-8", errors="replace").strip()
 
-                    if line.startswith("data: "):
-                        payload = line[6:]
-                        if payload == "[DONE]":
-                            # Inject metadata before [DONE]
-                            meta = cfg.metadata
-                            if meta.enabled:
-                                elapsed = time.monotonic() - t0
-                                reason = route.reason if attempt == 0 else f"fallback:{route.model}→{current_model}"
-                                wm = metadata.format_line(current_model, elapsed, 0, reason,
-                                    include_model=True, include_elapsed=True, include_tokens=False, include_reason=False, include_timestamp=True)
-                                wm_chunk = json.dumps({
-                                    "id": "chatcmpl-meta",
-                                    "object": "chat.completion.chunk",
-                                    "model": current_model,
-                                    "choices": [{"index": 0, "delta": {"content": wm}, "finish_reason": None}],
-                                })
-                                yield f"data: {wm_chunk}\n\n"
-                            yield "data: [DONE]\n\n"
+                if text.startswith("data: ") or "\ndata: " in text:
+                    # SSE format — process line by line
+                    for raw_line in text.split("\n"):
+                        line = raw_line.strip()
+                        if not line:
                             continue
 
-                        try:
-                            chunk = json.loads(payload)
-                            # Detect Vertex AI format and convert to OpenAI chunk
-                            if "candidates" in chunk:
-                                converted = _convert_vertex_sse_line(payload, current_model)
-                                yield f"data: {converted}\n\n"
-                            else:
-                                chunk["model"] = current_model
-                                yield f"data: {json.dumps(chunk)}\n\n"
-                        except json.JSONDecodeError:
-                            yield f"{line}\n\n"
-                    else:
-                        yield f"{line}\n"
+                        if line.startswith("data: "):
+                            payload = line[6:]
+                            if payload == "[DONE]":
+                                meta = cfg.metadata
+                                if meta.enabled:
+                                    elapsed = time.monotonic() - t0
+                                    reason = route.reason if attempt == 0 else f"fallback:{route.model}→{current_model}"
+                                    wm = metadata.format_line(current_model, elapsed, 0, reason,
+                                        include_model=True, include_elapsed=True, include_tokens=False, include_reason=False, include_timestamp=True)
+                                    wm_chunk = json.dumps({
+                                        "id": "chatcmpl-meta",
+                                        "object": "chat.completion.chunk",
+                                        "model": current_model,
+                                        "choices": [{"index": 0, "delta": {"content": wm}, "finish_reason": None}],
+                                    })
+                                    yield f"data: {wm_chunk}\n\n"
+                                yield "data: [DONE]\n\n"
+                                continue
+
+                            try:
+                                chunk = json.loads(payload)
+                                if "candidates" in chunk:
+                                    converted = _convert_vertex_sse_line(payload, current_model)
+                                    yield f"data: {converted}\n\n"
+                                else:
+                                    chunk["model"] = current_model
+                                    yield f"data: {json.dumps(chunk)}\n\n"
+                            except json.JSONDecodeError:
+                                yield f"{line}\n\n"
+                        else:
+                            yield f"{line}\n"
+                else:
+                    # Non-SSE format (e.g. Vertex returns JSON array/object instead of SSE)
+                    try:
+                        parsed = json.loads(text)
+                        if isinstance(parsed, list):
+                            parsed = parsed[0] if parsed else {}
+
+                        if "candidates" in parsed:
+                            oai_resp = _convert_vertex_non_stream(parsed, current_model)
+                        else:
+                            oai_resp = parsed
+                            oai_resp["model"] = current_model
+
+                        content = oai_resp.get("choices", [{}])[0].get("message", {}).get("content", "")
+                        chunk_id = oai_resp.get("id", f"chatcmpl-{int(time.time())}")
+                        created = oai_resp.get("created", int(time.time()))
+                        finish_reason = oai_resp.get("choices", [{}])[0].get("finish_reason", "stop")
+
+                        meta = cfg.metadata
+                        if meta.enabled:
+                            elapsed = time.monotonic() - t0
+                            reason = route.reason if attempt == 0 else f"fallback:{route.model}→{current_model}"
+                            wm = metadata.format_line(current_model, elapsed, 0, reason,
+                                include_model=True, include_elapsed=True, include_tokens=False, include_reason=False, include_timestamp=True)
+                            content += wm
+
+                        yield f"data: {json.dumps({'id': chunk_id, 'object': 'chat.completion.chunk', 'created': created, 'model': current_model, 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': content}, 'finish_reason': None}]})}\n\n"
+                        yield f"data: {json.dumps({'id': chunk_id, 'object': 'chat.completion.chunk', 'created': created, 'model': current_model, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': finish_reason}]})}\n\n"
+                        yield "data: [DONE]\n\n"
+                    except (json.JSONDecodeError, KeyError, IndexError) as exc:
+                        logger.error("non-SSE response parse error: %s", exc)
+                        yield f"data: {json.dumps({'error': {'message': f'non-SSE format parse error: {exc}'}})}\n\n"
 
             break  # success
 
