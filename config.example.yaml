@@ -1,0 +1,153 @@
+# llm-router config.yaml — example configuration
+# Copy to config.yaml and customize for your environment.
+
+version: 1                              # schema version for future migrations
+
+server:
+  host: 0.0.0.0
+  port: 8100
+  log_level: warning                     # debug | info | warning | error
+
+# ── Provider definitions ───────────────────────────────
+providers:
+  anthropic-main:
+    type: anthropic
+    base_url: https://api.anthropic.com
+    auth:
+      type: header_key                   # Anthropic uses x-api-key header
+      header: x-api-key
+      value: ${ANTHROPIC_API_KEY}
+    headers:
+      anthropic-version: "2023-06-01"
+    models:
+      - claude-opus-4-6
+      - claude-sonnet-4-6
+
+  azure-openai:
+    type: openai
+    base_url: https://my-resource.openai.azure.com
+    auth:
+      type: header_key                   # Azure uses custom api-key header
+      header: api-key
+      value: ${AZURE_OPENAI_KEY}
+    models:
+      - gpt-4o
+      - gpt-4o-mini
+    deployments:
+      gpt-4o: my-gpt4o-deployment
+      gpt-4o-mini: my-gpt4o-mini-deployment
+
+  openai-direct:
+    type: openai
+    base_url: https://api.openai.com
+    auth:
+      type: bearer                       # Standard Bearer token
+      value: ${OPENAI_API_KEY}
+    models:
+      - gpt-4-turbo
+
+  google-vertex:
+    type: vertex
+    base_url: https://us-central1-aiplatform.googleapis.com
+    auth:
+      type: bearer
+      value: ${VERTEX_ACCESS_TOKEN}
+    models:
+      - gemini-2.5-pro
+      - gemini-2.5-flash
+
+# ── Routing rules ──────────────────────────────────────
+routing:
+  default_model: claude-sonnet-4-6
+  global_override: null                  # set to a model name to force all requests
+
+  rules:                                 # evaluated top-to-bottom, first match wins
+    - name: force-invest-opus
+      match:
+        type: pattern
+        field: system_prompt
+        pattern: "agent:invest"
+      model: claude-opus-4-6
+
+    - name: heavy-analysis-keyword
+      match:
+        type: keyword
+        field: all_text
+        keywords:
+          深度分析: { weight_a: 0.8, weight_b: 0.2, source: manual }
+          选股:     { weight_a: 0.9, weight_b: 0.1, source: manual }
+          策略:     { weight_a: 0.7, weight_b: 0.3, source: manual }
+        threshold: 0.15
+      model: claude-opus-4-6
+      fallback_model: claude-sonnet-4-6
+
+    - name: cron-stock-premarket
+      match:
+        type: pattern
+        field: system_prompt
+        pattern: "a-stock-premarket"
+        extract: "agent:\\w+:(cron|chat):[^\\s]+"
+      model: claude-opus-4-6
+
+    - name: short-context
+      match:
+        type: length
+        field: user_message
+        max_chars: 1999
+      model: claude-sonnet-4-6
+
+    - name: long-context
+      match:
+        type: length
+        field: user_message
+        min_chars: 2000
+      model: claude-opus-4-6
+
+# ── Fallback / circuit breaker ─────────────────────────
+fallback:
+  enabled: true
+  default_tier: T1
+  tiers:
+    T1:
+      - claude-opus-4-6
+      - gpt-4o
+      - claude-sonnet-4-6
+      - gemini-2.5-pro
+    T2:
+      - claude-sonnet-4-6
+      - gpt-4o-mini
+      - gemini-2.5-flash
+    T3:
+      - gpt-4o-mini
+      - gemini-2.5-flash
+  max_retries: 8
+  circuit_breaker:
+    failure_threshold: 3
+    recovery_seconds: 300
+  retry_on_status: [429, 500, 502, 503]
+
+# ── Metadata injection ─────────────────────────────────
+metadata:
+  enabled: true
+  format: footer                         # footer | header | none
+  fields:
+    - timestamp
+    - model
+    - elapsed
+    - tokens
+    - stop_reason
+
+# ── Stats / logging ───────────────────────────────────
+stats:
+  enabled: true
+  path: ./stats.jsonl
+  max_bytes: 10485760                    # 10 MB rotation
+
+# ── Auto-learning (optional) ──────────────────────────
+learning:
+  enabled: false
+  alpha: 0.1
+  min_weight: 0.1
+  max_weight: 0.9
+  max_keywords_per_update: 5
+  protect_manual: true

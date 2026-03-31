@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp/debug files
+_*.py
+debug_*.py
+*.bak
+*.orig
+*.tmp
+test_output.txt
+
+# Internal docs (not for distribution)
+SPEC.md
+PLAN.md
+
+# Instance-specific config
+rules.json
