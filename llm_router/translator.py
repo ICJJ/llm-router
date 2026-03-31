@@ -180,6 +180,11 @@ async def translate_openai_stream(
 
     # Emit message_delta + message_stop after loop (usage chunk already captured)
     if started:
+        # If stream ended without finish_reason, emit missing content_block_stop
+        if not finished:
+            block_stop = {"type": "content_block_stop", "index": 0}
+            yield f"event: content_block_stop\ndata: {json.dumps(block_stop)}\n\n"
+
         msg_delta: dict[str, Any] = {
             "type": "message_delta",
             "delta": {"stop_reason": stop_reason},
