@@ -63,6 +63,7 @@ class ProviderConfig(BaseModel):
     headers: dict[str, str] = {}
     models: list[str] = []
     deployments: dict[str, str] = {}
+    url_template: str | None = None  # 自定义 URL 模板，支持 {base_url} 和 {deployment} 占位符
 
 
 class KeywordWeight(BaseModel):

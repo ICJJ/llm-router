@@ -447,3 +447,213 @@ def _record_stats(
     if fallback_from:
         entry["fallback_from"] = fallback_from
     stats.append(entry)
+
+
+# ── OpenAI Chat Completions pass-through proxy ─────────────────────
+
+async def handle_chat_completions(request: Request) -> JSONResponse | StreamingResponse:
+    """Proxy handler for POST /v1/chat/completions (OpenAI format pass-through)."""
+    raw = await request.body()
+    body = json.loads(raw)
+
+    messages = body.get("messages", [])
+    cfg = get_config()
+    original_model = body.get("model", cfg.routing.default_model)
+    route = route_request(messages, original_model, cfg)
+    logger.info("chat/completions routed to %s (L%d: %s)", route.model, route.level, route.reason)
+
+    is_stream = body.get("stream", False)
+
+    if is_stream:
+        return await _oai_stream_proxy(body, route)
+    else:
+        return await _oai_non_stream_proxy(body, route)
+
+
+async def _oai_non_stream_proxy(
+    body: dict[str, Any],
+    route: RouteResult,
+) -> JSONResponse:
+    """OpenAI format non-streaming proxy with fallback."""
+    cfg = get_config()
+    retry_statuses = set(cfg.fallback.retry_on_status)
+
+    if route.tier:
+        tier = route.tier
+    elif route.model in ("claude-opus-4-6", "gpt-5.4"):
+        tier = "T1"
+    else:
+        tier = cfg.fallback.default_tier
+
+    rules_compat = cfg.model_dump()
+    chain_len = fallback_module.get_tier_chain_length(tier, rules_compat)
+    max_retries = max(chain_len - 1, 0) if cfg.fallback.enabled else 0
+
+    current_model = route.model
+    client = _get_client()
+
+    for attempt in range(1 + max_retries):
+        registry = get_registry()
+        url = registry.get_request_url(current_model)
+        hdrs = _oai_build_headers(current_model)
+
+        req_body = {**body, "model": current_model}
+        # GPT-5.x uses max_completion_tokens
+        if current_model.startswith("gpt-5") and "max_tokens" in req_body:
+            req_body["max_completion_tokens"] = req_body.pop("max_tokens")
+
+        t0 = time.monotonic()
+        resp = await client.post(url, json=req_body, headers=hdrs)
+        elapsed = time.monotonic() - t0
+
+        if resp.status_code == 200:
+            fallback_module.record_success(current_model)
+            resp_body = resp.json()
+            # Fix model name in response
+            resp_body["model"] = current_model
+            # Inject metadata as content suffix
+            meta = cfg.metadata
+            if meta.enabled:
+                _oai_inject_metadata(resp_body, current_model, elapsed, route.reason if attempt == 0 else f"fallback:{route.model}→{current_model}")
+            return JSONResponse(content=resp_body)
+
+        fallback_module.record_failure(current_model)
+        logger.warning("oai model %s returned %d (attempt %d/%d)", current_model, resp.status_code, attempt + 1, 1 + max_retries)
+
+        if resp.status_code not in retry_statuses or attempt >= max_retries:
+            try:
+                return JSONResponse(content=resp.json(), status_code=resp.status_code)
+            except Exception:
+                return JSONResponse(content={"error": {"message": f"upstream returned {resp.status_code}"}}, status_code=resp.status_code)
+
+        next_model = fallback_module.get_fallback_model(current_model, rules_compat, tier=tier)
+        if not next_model:
+            try:
+                return JSONResponse(content=resp.json(), status_code=resp.status_code)
+            except Exception:
+                return JSONResponse(content={"error": {"message": f"upstream returned {resp.status_code}"}}, status_code=resp.status_code)
+
+        logger.info("oai falling back from %s to %s", current_model, next_model)
+        current_model = next_model
+
+    return JSONResponse(content={"error": {"message": "exhausted retries"}}, status_code=502)
+
+
+async def _oai_stream_proxy(
+    body: dict[str, Any],
+    route: RouteResult,
+) -> StreamingResponse:
+    """OpenAI format streaming proxy with fallback."""
+    async def event_generator():
+        cfg = get_config()
+        retry_statuses = set(cfg.fallback.retry_on_status)
+
+        if route.tier:
+            tier = route.tier
+        elif route.model in ("claude-opus-4-6", "gpt-5.4"):
+            tier = "T1"
+        else:
+            tier = cfg.fallback.default_tier
+
+        rules_compat = cfg.model_dump()
+        chain_len = fallback_module.get_tier_chain_length(tier, rules_compat)
+        max_retries = max(chain_len - 1, 0) if cfg.fallback.enabled else 0
+
+        client = _get_client()
+        current_model = route.model
+        t0 = time.monotonic()
+
+        for attempt in range(1 + max_retries):
+            registry = get_registry()
+            url = registry.get_request_url(current_model)
+            hdrs = _oai_build_headers(current_model)
+
+            req_body = {**body, "model": current_model, "stream": True}
+            if current_model.startswith("gpt-5") and "max_tokens" in req_body:
+                req_body["max_completion_tokens"] = req_body.pop("max_tokens")
+
+            async with client.stream("POST", url, json=req_body, headers=hdrs) as resp:
+                if resp.status_code != 200:
+                    await resp.aread()
+                    fallback_module.record_failure(current_model)
+
+                    if resp.status_code in retry_statuses and attempt < max_retries:
+                        next_model = fallback_module.get_fallback_model(current_model, rules_compat, tier=tier)
+                        if next_model:
+                            logger.info("oai stream falling back from %s to %s", current_model, next_model)
+                            current_model = next_model
+                            continue
+
+                    yield f"data: {json.dumps({'error': {'message': f'upstream returned {resp.status_code}'}})}\n\n"
+                    return
+
+                fallback_module.record_success(current_model)
+
+                async for raw_line in resp.aiter_lines():
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+
+                    if line.startswith("data: "):
+                        payload = line[6:]
+                        if payload == "[DONE]":
+                            # Inject metadata before [DONE]
+                            meta = cfg.metadata
+                            if meta.enabled:
+                                elapsed = time.monotonic() - t0
+                                reason = route.reason if attempt == 0 else f"fallback:{route.model}→{current_model}"
+                                wm = metadata.format_line(current_model, elapsed, 0, reason,
+                                    include_model=True, include_elapsed=True, include_tokens=False, include_reason=False, include_timestamp=True)
+                                wm_chunk = json.dumps({
+                                    "id": "chatcmpl-meta",
+                                    "object": "chat.completion.chunk",
+                                    "model": current_model,
+                                    "choices": [{"index": 0, "delta": {"content": wm}, "finish_reason": None}],
+                                })
+                                yield f"data: {wm_chunk}\n\n"
+                            yield "data: [DONE]\n\n"
+                            continue
+
+                        try:
+                            chunk = json.loads(payload)
+                            chunk["model"] = current_model
+                            yield f"data: {json.dumps(chunk)}\n\n"
+                        except json.JSONDecodeError:
+                            yield f"{line}\n\n"
+                    else:
+                        yield f"{line}\n"
+
+            break  # success
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+def _oai_build_headers(model: str) -> dict[str, str]:
+    """Build upstream request headers for OpenAI-format requests."""
+    registry = get_registry()
+    r = registry.resolve(model)
+    hdrs: dict[str, str] = {"Content-Type": "application/json"}
+    hdrs.update(r.extra_headers)
+    if r.auth.type == "header_key":
+        hdrs[r.auth.header] = r.auth.value
+    elif r.auth.type == "bearer":
+        hdrs["Authorization"] = f"Bearer {r.auth.value}"
+    return hdrs
+
+
+def _oai_inject_metadata(
+    body: dict[str, Any],
+    model_id: str,
+    elapsed_s: float,
+    reason: str,
+) -> None:
+    """Inject metadata into an OpenAI Chat Completions response."""
+    output_tokens = body.get("usage", {}).get("completion_tokens", 0)
+    line = metadata.format_line(model_id, elapsed_s, output_tokens, reason,
+        include_model=True, include_elapsed=True, include_tokens=True, include_reason=False, include_timestamp=True)
+    choices = body.get("choices", [])
+    if choices:
+        msg = choices[0].get("message", {})
+        content = msg.get("content", "")
+        if content is not None:
+            msg["content"] = content + line

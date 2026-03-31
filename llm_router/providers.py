@@ -15,6 +15,7 @@ class ResolvedProvider:
     deployment: str
     auth: AuthConfig
     extra_headers: dict[str, str]
+    url_template: str | None = None
 
 
 class ProviderRegistry:
@@ -61,11 +62,14 @@ class ProviderRegistry:
             deployment=deployment,
             auth=p.auth,
             extra_headers=dict(p.headers),
+            url_template=p.url_template,
         )
 
     def get_request_url(self, model: str) -> str:
         """Build the full upstream URL for a model request."""
         r = self.resolve(model)
+        if r.url_template:
+            return r.url_template.format(base_url=r.base_url, deployment=r.deployment)
         if r.provider_type == "openai":
             return (
                 f"{r.base_url}/openai/deployments/{r.deployment}"

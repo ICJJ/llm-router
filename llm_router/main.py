@@ -36,6 +36,14 @@ def create_app() -> FastAPI:
         response = await handle_messages(request)
         return response
 
+    @application.post("/v1/chat/completions")
+    async def chat_completions(request: Request):  # pyright: ignore[reportUnusedFunction]
+        global _request_count
+        _request_count += 1
+        from .proxy import handle_chat_completions
+        response = await handle_chat_completions(request)
+        return response
+
     @application.get("/health")
     async def health() -> dict[str, Any]:  # pyright: ignore[reportUnusedFunction]
         from . import fallback as fb
