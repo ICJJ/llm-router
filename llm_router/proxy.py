@@ -679,6 +679,9 @@ async def _oai_stream_proxy(
                 full_body = await resp.aread()
                 text = full_body.decode("utf-8", errors="replace").strip()
 
+                has_text_content = False
+                last_finish_reason = None
+
                 if text.startswith("data: ") or "\ndata: " in text:
                     # SSE format — process line by line
                     for raw_line in text.split("\n"):
@@ -690,7 +693,7 @@ async def _oai_stream_proxy(
                             payload = line[6:]
                             if payload == "[DONE]":
                                 meta = cfg.metadata
-                                if meta.enabled:
+                                if meta.enabled and has_text_content and last_finish_reason != "tool_calls":
                                     elapsed = time.monotonic() - t0
                                     reason = route.reason if attempt == 0 else f"fallback:{route.model}→{current_model}"
                                     wm = metadata.format_line(current_model, elapsed, 0, reason,
@@ -707,6 +710,15 @@ async def _oai_stream_proxy(
 
                             try:
                                 chunk = json.loads(payload)
+                                # Track text content and finish_reason for metadata guard
+                                ch_choices = chunk.get("choices", [])
+                                if ch_choices:
+                                    delta = ch_choices[0].get("delta", {})
+                                    if delta.get("content"):
+                                        has_text_content = True
+                                    fr = ch_choices[0].get("finish_reason")
+                                    if fr is not None:
+                                        last_finish_reason = fr
                                 if "candidates" in chunk:
                                     converted = _convert_vertex_sse_line(payload, current_model)
                                     yield f"data: {converted}\n\n"
@@ -736,7 +748,7 @@ async def _oai_stream_proxy(
                         finish_reason = oai_resp.get("choices", [{}])[0].get("finish_reason", "stop")
 
                         meta = cfg.metadata
-                        if meta.enabled:
+                        if meta.enabled and finish_reason != "tool_calls" and content:
                             elapsed = time.monotonic() - t0
                             reason = route.reason if attempt == 0 else f"fallback:{route.model}→{current_model}"
                             wm = metadata.format_line(current_model, elapsed, 0, reason,
@@ -775,12 +787,18 @@ def _oai_inject_metadata(
     reason: str,
 ) -> None:
     """Inject metadata into an OpenAI Chat Completions response."""
+    choices = body.get("choices", [])
+    if not choices:
+        return
+    # Skip metadata for tool_calls responses (no user-visible text)
+    if choices[0].get("finish_reason") == "tool_calls":
+        return
+    msg = choices[0].get("message", {})
+    content = msg.get("content")
+    # Skip if no text content
+    if not content:
+        return
     output_tokens = body.get("usage", {}).get("completion_tokens", 0)
     line = metadata.format_line(model_id, elapsed_s, output_tokens, reason,
         include_model=True, include_elapsed=True, include_tokens=True, include_reason=False, include_timestamp=True)
-    choices = body.get("choices", [])
-    if choices:
-        msg = choices[0].get("message", {})
-        content = msg.get("content", "")
-        if content is not None:
-            msg["content"] = content + line
+    msg["content"] = content + line
