@@ -46,7 +46,7 @@ def route(
 
     # L5: default
     return RouteResult(
-        model=cfg.routing.default_model or original_model,
+        model=original_model or cfg.routing.default_model,
         reason="default",
         level=5,
         session_key=session_key,
