@@ -449,6 +449,70 @@ def _record_stats(
     stats.append(entry)
 
 
+# ── Vertex AI → OpenAI format conversion ───────────────────────────
+
+_VERTEX_FINISH_REASON_MAP: dict[str, str] = {
+    "STOP": "stop",
+    "MAX_TOKENS": "length",
+    "SAFETY": "content_filter",
+}
+
+
+def _convert_vertex_non_stream(data: dict[str, Any], model_name: str) -> dict[str, Any]:
+    """Convert a Vertex AI non-streaming response to OpenAI chat completion format."""
+    candidates = data.get("candidates", [])
+    choices: list[dict[str, Any]] = []
+    for i, c in enumerate(candidates):
+        parts = c.get("content", {}).get("parts", [])
+        text = "".join(p.get("text", "") for p in parts)
+        raw_reason = c.get("finishReason", "STOP")
+        choices.append({
+            "index": i,
+            "message": {"role": "assistant", "content": text},
+            "finish_reason": _VERTEX_FINISH_REASON_MAP.get(raw_reason, "stop"),
+        })
+    usage_meta = data.get("usageMetadata", {})
+    usage = {
+        "prompt_tokens": usage_meta.get("promptTokenCount", 0),
+        "completion_tokens": usage_meta.get("candidatesTokenCount", 0),
+        "total_tokens": usage_meta.get("totalTokenCount", 0),
+    } if usage_meta else {}
+    return {
+        "id": data.get("id", f"chatcmpl-{int(time.time())}"),
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": model_name,
+        "choices": choices,
+        "usage": usage,
+    }
+
+
+def _convert_vertex_sse_line(payload: str, model_name: str) -> str:
+    """Convert a single Vertex AI SSE data payload to OpenAI chunk format."""
+    data = json.loads(payload)
+    candidates = data.get("candidates", [])
+    choices: list[dict[str, Any]] = []
+    for i, c in enumerate(candidates):
+        delta: dict[str, Any] = {}
+        parts = c.get("content", {}).get("parts", [])
+        if parts:
+            delta["content"] = "".join(p.get("text", "") for p in parts)
+        if c.get("content", {}).get("role") == "model":
+            delta["role"] = "assistant"
+        choice: dict[str, Any] = {"index": i, "delta": delta, "finish_reason": None}
+        raw_reason = c.get("finishReason")
+        if raw_reason:
+            choice["finish_reason"] = _VERTEX_FINISH_REASON_MAP.get(raw_reason, "stop")
+        choices.append(choice)
+    return json.dumps({
+        "id": data.get("id", f"chatcmpl-{int(time.time())}"),
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "model": model_name,
+        "choices": choices,
+    })
+
+
 # ── OpenAI Chat Completions pass-through proxy ─────────────────────
 
 async def handle_chat_completions(request: Request) -> JSONResponse | StreamingResponse:
@@ -509,8 +573,12 @@ async def _oai_non_stream_proxy(
         if resp.status_code == 200:
             fallback_module.record_success(current_model)
             resp_body = resp.json()
-            # Fix model name in response
-            resp_body["model"] = current_model
+            # Detect Vertex AI format and convert to OpenAI format
+            if "candidates" in resp_body:
+                resp_body = _convert_vertex_non_stream(resp_body, current_model)
+            else:
+                # Fix model name in response
+                resp_body["model"] = current_model
             # Inject metadata as content suffix
             meta = cfg.metadata
             if meta.enabled:
@@ -616,8 +684,13 @@ async def _oai_stream_proxy(
 
                         try:
                             chunk = json.loads(payload)
-                            chunk["model"] = current_model
-                            yield f"data: {json.dumps(chunk)}\n\n"
+                            # Detect Vertex AI format and convert to OpenAI chunk
+                            if "candidates" in chunk:
+                                converted = _convert_vertex_sse_line(payload, current_model)
+                                yield f"data: {converted}\n\n"
+                            else:
+                                chunk["model"] = current_model
+                                yield f"data: {json.dumps(chunk)}\n\n"
                         except json.JSONDecodeError:
                             yield f"{line}\n\n"
                     else:
