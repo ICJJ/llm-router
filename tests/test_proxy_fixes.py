@@ -141,13 +141,14 @@ class TestProcessSseEvent:
             "output_tokens": 10,
             "last_block_index": 0,
             "resp_content_blocks": [],
+            "has_text_content": True,
             "injected": False,
             "t0": time.monotonic() - 1.0,
             "current_model": "gpt-4.1",
         }
         inject_cfg: dict[str, Any] = {"enabled": True, "include_model": True}
 
-        data = json.dumps({"usage": {"output_tokens": 20}})
+        data = json.dumps({"delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 20}})
 
         with patch("llm_router.proxy.metadata.build_streaming_event") as mock_build:
             mock_build.return_value = "event: content_block_delta\ndata: {}\n\n"
@@ -164,12 +165,13 @@ class TestProcessSseEvent:
             "output_tokens": 0,
             "last_block_index": 0,
             "resp_content_blocks": [],
+            "has_text_content": True,
             "injected": False,
             "t0": time.monotonic(),
             "current_model": "claude-sonnet-4-6",
         }
         inject_cfg: dict[str, Any] = {"enabled": True}
-        data = json.dumps({"usage": {"output_tokens": 5}})
+        data = json.dumps({"delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 5}})
 
         with patch("llm_router.proxy.metadata.build_streaming_event") as mock_build:
             mock_build.return_value = None
@@ -284,6 +286,7 @@ class TestSseEventBoundaries:
             "output_tokens": 100,
             "last_block_index": 0,
             "resp_content_blocks": [],
+            "has_text_content": True,
             "injected": False,
             "t0": time.monotonic() - 1.0,
             "current_model": "test-model",

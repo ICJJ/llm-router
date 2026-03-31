@@ -226,12 +226,17 @@ def _process_sse_event(
         if cb:
             state["resp_content_blocks"].append(cb)
 
+    if event_type == "content_block_delta":
+        delta_body = data.get("delta", {})
+        if delta_body.get("type") == "text_delta" and delta_body.get("text"):
+            state["has_text_content"] = True
+
     if event_type == "message_delta":
         usage = data.get("usage", {})
         state["output_tokens"] = usage.get("output_tokens", state["output_tokens"])
         # Only inject metadata on final replies (end_turn/max_tokens), not tool_use
         stop_reason = data.get("delta", {}).get("stop_reason")
-        if not state["injected"] and stop_reason in ("end_turn", "max_tokens", None):
+        if not state["injected"] and stop_reason in ("end_turn", "max_tokens") and state.get("has_text_content"):
             state["injected"] = True
             elapsed = time.monotonic() - state["t0"]
             meta_event = metadata.build_streaming_event(
@@ -336,6 +341,7 @@ async def _stream_proxy(
             "output_tokens": 0,
             "last_block_index": 0,
             "resp_content_blocks": [],
+            "has_text_content": False,
             "injected": False,
             "t0": t0,
             "current_model": route.model,
