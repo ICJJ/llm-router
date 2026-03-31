@@ -59,6 +59,10 @@ def anthropic_to_openai(body: dict[str, Any], target_model: str) -> dict[str, An
         if key in body:
             result[key] = body[key]
 
+    # Request usage info in streaming responses
+    if body.get("stream"):
+        result["stream_options"] = {"include_usage": True}
+
     if "max_tokens" in body:
         if is_gpt5:
             result["max_completion_tokens"] = body["max_tokens"]
@@ -99,6 +103,7 @@ async def translate_openai_stream(
     started = False
     finished = False
     output_tokens = 0
+    stop_reason = "end_turn"
 
     async for raw_line in resp.aiter_lines():
         line = raw_line.strip()
@@ -116,9 +121,18 @@ async def translate_openai_stream(
             data = json.loads(payload)
         except json.JSONDecodeError:
             continue
+        if not isinstance(data, dict):
+            continue
 
-        choice = data.get("choices", [{}])[0]
-        delta = choice.get("delta", {})
+        choices = data.get("choices", [])
+        if not choices:
+            # Capture usage from stream_options final chunk (empty choices)
+            usage = data.get("usage") or {}
+            if usage.get("completion_tokens"):
+                output_tokens = usage["completion_tokens"]
+            continue
+        choice = choices[0]
+        delta = choice.get("delta") or {}
         finish_reason = choice.get("finish_reason")
 
         # First chunk — emit message_start + content_block_start
@@ -154,35 +168,21 @@ async def translate_openai_stream(
             }
             yield f"event: content_block_delta\ndata: {json.dumps(block_delta)}\n\n"
 
-        # Finish
+        # Finish — emit content_block_stop, defer message_delta until usage arrives
         if finish_reason:
             finished = True
-            usage = data.get("usage", {})
+            stop_reason = _STOP_REASON_MAP.get(finish_reason, "end_turn")
+            usage = data.get("usage") or {}
             output_tokens = usage.get("completion_tokens", output_tokens)
 
             block_stop: dict[str, Any] = {"type": "content_block_stop", "index": 0}
             yield f"event: content_block_stop\ndata: {json.dumps(block_stop)}\n\n"
 
-            msg_delta: dict[str, Any] = {
-                "type": "message_delta",
-                "delta": {
-                    "stop_reason": _STOP_REASON_MAP.get(finish_reason, "end_turn"),
-                },
-                "usage": {"output_tokens": output_tokens},
-            }
-            yield f"event: message_delta\ndata: {json.dumps(msg_delta)}\n\n"
-
-            msg_stop = {"type": "message_stop"}
-            yield f"event: message_stop\ndata: {json.dumps(msg_stop)}\n\n"
-
-    # If stream ended without a finish_reason, send closing events
-    if started and not finished:
-        block_stop: dict[str, Any] = {"type": "content_block_stop", "index": 0}
-        yield f"event: content_block_stop\ndata: {json.dumps(block_stop)}\n\n"
-
+    # Emit message_delta + message_stop after loop (usage chunk already captured)
+    if started:
         msg_delta: dict[str, Any] = {
             "type": "message_delta",
-            "delta": {"stop_reason": "end_turn"},
+            "delta": {"stop_reason": stop_reason},
             "usage": {"output_tokens": output_tokens},
         }
         yield f"event: message_delta\ndata: {json.dumps(msg_delta)}\n\n"

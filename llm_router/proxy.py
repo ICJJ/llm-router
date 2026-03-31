@@ -379,7 +379,19 @@ async def _stream_proxy(
                 if needs_translation:
                     try:
                         async for chunk in translator.translate_openai_stream(resp, current_model):
-                            yield chunk
+                            evt = ""
+                            dlines: list[str] = []
+                            for sse_line in chunk.split("\n"):
+                                stripped = sse_line.strip()
+                                if stripped.startswith("event: "):
+                                    evt = stripped[7:]
+                                elif stripped.startswith("data: "):
+                                    dlines.append(stripped[6:])
+                            if evt and dlines:
+                                for c in _flush_sse_event(evt, dlines, state, route, inject_cfg):
+                                    yield c
+                            else:
+                                yield chunk
                     except httpx.StreamError as exc:
                         logger.error("upstream OpenAI/Vertex stream interrupted: %s", exc)
                         error_event: dict[str, Any] = {
