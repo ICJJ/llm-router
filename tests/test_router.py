@@ -3,9 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
-from llm_router.config import Config, RoutingConfig, RoutingRule, MatchRule, KeywordWeight
+from llm_router.config import Config, RoutingConfig
 from llm_router.router import route, content_to_text, RouteResult, _extract_session_key  # pyright: ignore[reportPrivateUsage]
 
 
@@ -303,7 +301,7 @@ class TestContentToText:
         assert content_to_text("hello world") == "hello world"
 
     def test_content_blocks(self):
-        blocks = [
+        blocks: list[dict[str, Any]] = [
             {"type": "text", "text": "hello"},
             {"type": "image", "source": {}},
             {"type": "text", "text": "world"},
@@ -314,7 +312,7 @@ class TestContentToText:
         assert content_to_text([]) == ""
 
     def test_no_text_blocks(self):
-        blocks = [{"type": "image", "source": {}}]
+        blocks: list[dict[str, Any]] = [{"type": "image", "source": {}}]
         assert content_to_text(blocks) == ""
 
 

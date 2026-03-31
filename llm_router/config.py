@@ -148,7 +148,7 @@ class Config(BaseModel):
 _ENV_PATTERN = re.compile(r"\$\{(\w+)\}")
 
 
-def _resolve_env_vars(raw: str) -> str:
+def resolve_env_vars(raw: str) -> str:
     """Replace ${VAR_NAME} placeholders with environment variable values."""
     return _ENV_PATTERN.sub(lambda m: os.environ.get(m.group(1), ""), raw)
 
@@ -158,18 +158,18 @@ def _resolve_env_vars(raw: str) -> str:
 def load_config(path: str) -> Config:
     """Load YAML config, resolve ${ENV} vars, validate schema and model references."""
     raw = Path(path).read_text(encoding="utf-8")
-    resolved = _resolve_env_vars(raw)
+    resolved = resolve_env_vars(raw)
     from ruamel.yaml import YAML  # type: ignore[import-untyped]
     yml = YAML()
     data = yml.load(resolved)
     if data is None:
         data = {}
     cfg = Config(**data)
-    _validate_model_references(cfg)
+    validate_model_references(cfg)
     return cfg
 
 
-def _validate_model_references(cfg: Config) -> None:
+def validate_model_references(cfg: Config) -> None:
     """Cross-section validation: all model references must exist in some provider."""
     all_models = {m for p in cfg.providers.values() for m in p.models}
     if not all_models:
@@ -239,14 +239,14 @@ def _reload_config() -> Config | None:
             raw = f.read()
         finally:
             _unlock(f)
-    resolved = _resolve_env_vars(raw)
+    resolved = resolve_env_vars(raw)
     from ruamel.yaml import YAML  # type: ignore[import-untyped]
     yml = YAML()
     data = yml.load(resolved)
     if data is None:
         data = {}
     cfg = Config(**data)
-    _validate_model_references(cfg)
+    validate_model_references(cfg)
     _config = cfg
     _config_mtime = mtime
     return cfg
@@ -281,6 +281,14 @@ def save_config(cfg: Config) -> None:
     with _config_lock:
         _config = cfg
         _config_mtime = p.stat().st_mtime
+
+
+def reset_config() -> None:
+    """Reset config state. Intended for test teardown."""
+    global _config, _config_path, _config_mtime
+    _config = None
+    _config_path = ""
+    _config_mtime = 0.0
 
 
 # ── Legacy backward compatibility ─────────────────────────────────

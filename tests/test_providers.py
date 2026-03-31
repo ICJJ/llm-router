@@ -1,6 +1,8 @@
 """Tests for llm_router.providers – Phase 2 Provider Registry."""
 from __future__ import annotations
 
+from collections.abc import Generator
+
 import pytest
 
 import llm_router.providers as prov_mod
@@ -10,6 +12,7 @@ from llm_router.providers import (
     ResolvedProvider,
     get_registry,
     init_registry,
+    reset_registry,
 )
 
 # ── Fixtures ────────────────────────────────────────────────────────
@@ -62,11 +65,11 @@ def registry_with_default() -> ProviderRegistry:
 
 
 @pytest.fixture(autouse=True)
-def _reset_global_registry():
+def _reset_global_registry() -> Generator[None, None, None]:  # pyright: ignore[reportUnusedFunction]
     """Reset module-level _registry before and after each test."""
-    prov_mod._registry = None
+    reset_registry()
     yield
-    prov_mod._registry = None
+    reset_registry()
 
 
 # ── 1. Construction ─────────────────────────────────────────────────
@@ -270,7 +273,7 @@ class TestModuleLevelFunctions:
         assert isinstance(reg, ProviderRegistry)
         assert "gpt-4o" in reg.all_models
 
-    def test_get_registry_before_init_auto_builds(self, monkeypatch):
+    def test_get_registry_before_init_auto_builds(self, monkeypatch: pytest.MonkeyPatch):
         """get_registry() with no prior init falls back to config/legacy build."""
         fake_providers = {
             "test-prov": ProviderConfig(
@@ -289,7 +292,7 @@ class TestModuleLevelFunctions:
         assert isinstance(reg, ProviderRegistry)
         assert "fake-model" in reg.all_models
 
-    def test_get_registry_falls_back_to_legacy_when_no_yaml_providers(self, monkeypatch):
+    def test_get_registry_falls_back_to_legacy_when_no_yaml_providers(self, monkeypatch: pytest.MonkeyPatch):
         """When config.providers is empty, falls back to _build_legacy_registry."""
 
         class FakeConfig:

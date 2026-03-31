@@ -144,6 +144,12 @@ def get_registry() -> ProviderRegistry:
     return _registry
 
 
+def reset_registry() -> None:
+    """Reset registry state for test teardown."""
+    global _registry
+    _registry = None
+
+
 def _build_legacy_registry() -> ProviderRegistry:
     """Build a minimal ProviderRegistry from Settings (no rules.json needed)."""
     from .config import get_settings

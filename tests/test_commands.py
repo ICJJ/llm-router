@@ -1,4 +1,5 @@
 """Tests for /route command parsing and execution."""
+from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 
@@ -11,8 +12,8 @@ from llm_router.commands import execute, is_route_command
 
 
 @pytest.fixture(autouse=True)
-def _init_config(tmp_path: Path) -> None:  # pyright: ignore[reportUnusedFunction]
-    cfg_data = {
+def _init_config(tmp_path: Path) -> Generator[None, None, None]:  # pyright: ignore[reportUnusedFunction]
+    cfg_data: dict[str, Any] = {
         "routing": {
             "default_model": "claude-sonnet-4-6",
             "rules": [
@@ -46,14 +47,12 @@ def _init_config(tmp_path: Path) -> None:  # pyright: ignore[reportUnusedFunctio
         },
     }
     cfg_path = tmp_path / "config.yaml"
-    yml = YAML()
+    yml: Any = YAML()
     with open(cfg_path, "w", encoding="utf-8") as f:
         yml.dump(cfg_data, f)
     init_config(str(cfg_path))
     yield
-    config_mod._config = None
-    config_mod._config_mtime = 0.0
-    config_mod._config_path = ""
+    config_mod.reset_config()
 
 
 def _msgs(text: str) -> list[dict[str, Any]]:

@@ -2,29 +2,22 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
+from typing import Any
 
-import pytest
-
-# migrations/ has no __init__.py — add to sys.path for direct import
-_migrations_dir = str(Path(__file__).resolve().parent.parent / "migrations")
-if _migrations_dir not in sys.path:
-    sys.path.insert(0, _migrations_dir)
-
-from json_to_yaml import (
-    _build_fallback,
-    _build_learning,
-    _build_metadata,
-    _build_providers,
-    _build_routing_rules,
+from migrations.json_to_yaml import (
+    build_fallback,
+    build_learning,
+    build_metadata,
+    build_providers,
+    build_routing_rules,
     migrate,
 )
 
 
 # ── Helper ─────────────────────────────────────────────────────────
 
-def _representative_rules() -> dict:
+def _representative_rules() -> dict[str, Any]:
     """A realistic rules.json payload for roundtrip tests."""
     return {
         "default_model": "claude-sonnet-4-6",
@@ -87,9 +80,9 @@ def _representative_rules() -> dict:
     }
 
 
-def _load_yaml(path: Path) -> dict:
-    from ruamel.yaml import YAML
-    yml = YAML()
+def _load_yaml(path: Path) -> dict[str, Any]:
+    from ruamel.yaml import YAML  # type: ignore[import-untyped]
+    yml: Any = YAML()
     return yml.load(path.read_text(encoding="utf-8"))
 
 
@@ -146,7 +139,7 @@ class TestMigrateRoundtrip:
         assert data["routing"]["rules"] == []
 
     def test_no_keywords_only_force_and_cron(self, tmp_path: Path):
-        rules = {
+        rules: dict[str, Any] = {
             "default_model": "claude-sonnet-4-6",
             "force_overrides": [
                 {"pattern": "FORCE", "model": "claude-opus-4-6"},
@@ -171,7 +164,7 @@ class TestMigrateRoundtrip:
 
 class TestBuildProviders:
     def test_with_openai_and_vertex(self):
-        rules = {
+        rules: dict[str, Any] = {
             "default_model": "claude-sonnet-4-6",
             "fallback": {
                 "openai_models": ["gpt-4o"],
@@ -180,7 +173,7 @@ class TestBuildProviders:
                 "deployments": {"gpt-4o": "gpt4o-deploy"},
             },
         }
-        providers = _build_providers(rules)
+        providers = build_providers(rules)
         assert "azure-openai" in providers
         assert "google-vertex" in providers
         assert "gpt-4o" in providers["azure-openai"]["models"]
@@ -188,7 +181,7 @@ class TestBuildProviders:
         assert "gemini-pro" in providers["google-vertex"]["models"]
 
     def test_anthropic_models_separate(self):
-        rules = {
+        rules: dict[str, Any] = {
             "default_model": "claude-opus-4-6",
             "fallback": {
                 "openai_models": ["gpt-4o"],
@@ -196,7 +189,7 @@ class TestBuildProviders:
                 "tiers": {"T1": ["claude-opus-4-6", "gpt-4o"]},
             },
         }
-        providers = _build_providers(rules)
+        providers = build_providers(rules)
         assert "anthropic-main" in providers
         assert "claude-opus-4-6" in providers["anthropic-main"]["models"]
         # claude-opus should NOT be in openai provider
@@ -205,19 +198,19 @@ class TestBuildProviders:
 
 class TestBuildRoutingRules:
     def test_force_override_produces_pattern_rule(self):
-        rules = {
+        rules: dict[str, Any] = {
             "force_overrides": [
                 {"pattern": "MY_PATTERN", "model": "claude-opus-4-6"},
             ],
         }
-        result = _build_routing_rules(rules)
+        result = build_routing_rules(rules)
         assert len(result) == 1
         assert result[0]["name"] == "force-MY_PATTERN"
         assert result[0]["match"]["type"] == "pattern"
         assert result[0]["model"] == "claude-opus-4-6"
 
     def test_keywords_produce_keyword_rules(self):
-        rules = {
+        rules: dict[str, Any] = {
             "keywords": {
                 "分析": {
                     "opus_weight": 0.8,
@@ -227,21 +220,21 @@ class TestBuildRoutingRules:
             },
             "keyword_score_threshold": 0.2,
         }
-        result = _build_routing_rules(rules)
+        result = build_routing_rules(rules)
         kw_rules = [r for r in result if r["match"]["type"] == "keyword"]
         assert len(kw_rules) == 1
         assert kw_rules[0]["name"] == "keyword-tier-t1"
         assert kw_rules[0]["match"]["threshold"] == 0.2
 
     def test_length_fallback_produces_two_rules(self):
-        rules = {
+        rules: dict[str, Any] = {
             "length_fallback": {
                 "threshold": 500,
                 "short_model": "claude-sonnet-4-6",
                 "long_model": "claude-opus-4-6",
             },
         }
-        result = _build_routing_rules(rules)
+        result = build_routing_rules(rules)
         length_rules = [r for r in result if r["match"]["type"] == "length"]
         assert len(length_rules) == 2
         names = {r["name"] for r in length_rules}
@@ -256,10 +249,10 @@ class TestBuildRoutingRules:
         assert long["model"] == "claude-opus-4-6"
 
     def test_cron_routes_produce_pattern_rules(self):
-        rules = {
+        rules: dict[str, Any] = {
             "cron_routes": {"morning": "claude-opus-4-6"},
         }
-        result = _build_routing_rules(rules)
+        result = build_routing_rules(rules)
         assert len(result) == 1
         assert result[0]["name"] == "cron-morning"
         assert result[0]["match"]["type"] == "pattern"
@@ -268,7 +261,7 @@ class TestBuildRoutingRules:
 
 class TestBuildMetadata:
     def test_metadata_fields(self):
-        rules = {
+        rules: dict[str, Any] = {
             "inject_metadata": {
                 "enabled": True,
                 "include_timestamp": True,
@@ -278,20 +271,20 @@ class TestBuildMetadata:
                 "include_reason": False,
             },
         }
-        meta = _build_metadata(rules)
+        meta = build_metadata(rules)
         assert meta["enabled"] is True
         assert meta["format"] == "footer"
         assert meta["fields"] == ["timestamp", "model", "tokens"]
 
     def test_no_metadata_key(self):
-        meta = _build_metadata({})
+        meta = build_metadata({})
         assert meta["enabled"] is True
         assert meta["fields"] == []
 
 
 class TestBuildLearning:
     def test_learning_params(self):
-        rules = {
+        rules: dict[str, Any] = {
             "auto_learn": {
                 "enabled": True,
                 "alpha": 0.3,
@@ -301,48 +294,48 @@ class TestBuildLearning:
                 "protect_manual": False,
             },
         }
-        learning = _build_learning(rules)
+        learning = build_learning(rules)
         assert learning["enabled"] is True
         assert learning["alpha"] == 0.3
         assert learning["protect_manual"] is False
 
     def test_no_auto_learn_key(self):
-        learning = _build_learning({})
+        learning = build_learning({})
         assert learning["enabled"] is False
         assert learning["alpha"] == 0.1
 
 
 class TestBuildFallback:
     def test_circuit_breaker_present(self):
-        rules = {
+        rules: dict[str, Any] = {
             "fallback": {
                 "enabled": True,
                 "tiers": {"T1": ["m1"]},
                 "max_retries": 5,
             },
         }
-        fb = _build_fallback(rules)
+        fb = build_fallback(rules)
         assert "circuit_breaker" in fb
         assert fb["circuit_breaker"]["failure_threshold"] == 3
 
     def test_openai_vertex_not_in_output(self):
-        rules = {
+        rules: dict[str, Any] = {
             "fallback": {
                 "openai_models": ["gpt-4o"],
                 "vertex_models": ["gemini-pro"],
                 "tiers": {"T1": ["m1"]},
             },
         }
-        fb = _build_fallback(rules)
+        fb = build_fallback(rules)
         assert "openai_models" not in fb
         assert "vertex_models" not in fb
         assert "deployments" not in fb
 
     def test_retry_on_status_preserved(self):
-        rules = {
+        rules: dict[str, Any] = {
             "fallback": {
                 "retry_on_status": [429, 503],
             },
         }
-        fb = _build_fallback(rules)
+        fb = build_fallback(rules)
         assert fb["retry_on_status"] == [429, 503]

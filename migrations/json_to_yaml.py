@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 
-def _build_providers(rules: dict[str, Any]) -> dict[str, Any]:
+def build_providers(rules: dict[str, Any]) -> dict[str, Any]:
     """② Generate providers block from fallback lists + upstream URLs."""
     providers: OrderedDict[str, Any] = OrderedDict()
     fallback = rules.get("fallback", {})
@@ -90,7 +90,7 @@ def _build_providers(rules: dict[str, Any]) -> dict[str, Any]:
     return providers
 
 
-def _build_routing_rules(rules: dict[str, Any]) -> list[dict[str, Any]]:
+def build_routing_rules(rules: dict[str, Any]) -> list[dict[str, Any]]:
     """③④⑤⑥⑦ Convert force_overrides, cron_routes, keywords, length_fallback → rules list."""
     result: list[dict[str, Any]] = []
 
@@ -190,7 +190,7 @@ def _build_routing_rules(rules: dict[str, Any]) -> list[dict[str, Any]]:
     return result
 
 
-def _build_metadata(rules: dict[str, Any]) -> dict[str, Any]:
+def build_metadata(rules: dict[str, Any]) -> dict[str, Any]:
     """⑧ inject_metadata → metadata section."""
     im = rules.get("inject_metadata", {})
     enabled = im.get("enabled", True)
@@ -211,7 +211,7 @@ def _build_metadata(rules: dict[str, Any]) -> dict[str, Any]:
     ])
 
 
-def _build_learning(rules: dict[str, Any]) -> dict[str, Any]:
+def build_learning(rules: dict[str, Any]) -> dict[str, Any]:
     """⑨ auto_learn → learning section."""
     al = rules.get("auto_learn", {})
     return OrderedDict([
@@ -224,7 +224,7 @@ def _build_learning(rules: dict[str, Any]) -> dict[str, Any]:
     ])
 
 
-def _build_fallback(rules: dict[str, Any]) -> dict[str, Any]:
+def build_fallback(rules: dict[str, Any]) -> dict[str, Any]:
     """⑩ Build fallback section (remove migrated fields)."""
     fb = rules.get("fallback", {})
     result: dict[str, Any] = OrderedDict([
@@ -251,11 +251,11 @@ def migrate(input_path: str, output_path: str) -> None:
     routing = OrderedDict([
         ("default_model", rules.get("default_model", "claude-sonnet-4-6")),
         ("global_override", rules.get("global_override")),
-        ("rules", _build_routing_rules(rules)),
+        ("rules", build_routing_rules(rules)),
     ])
 
     # ② providers
-    providers = _build_providers(rules)
+    providers = build_providers(rules)
 
     # Build full config
     config = OrderedDict([
@@ -267,26 +267,24 @@ def migrate(input_path: str, output_path: str) -> None:
         ])),
         ("providers", providers),
         ("routing", routing),
-        ("fallback", _build_fallback(rules)),
-        ("metadata", _build_metadata(rules)),
+        ("fallback", build_fallback(rules)),
+        ("metadata", build_metadata(rules)),
         ("stats", OrderedDict([
             ("enabled", True),
             ("path", "./stats.jsonl"),
             ("max_bytes", 10_485_760),
         ])),
-        ("learning", _build_learning(rules)),
+        ("learning", build_learning(rules)),
     ])
 
     from ruamel.yaml import YAML  # type: ignore[import-untyped]
-    yml = YAML()
+    yml: Any = YAML()
     yml.default_flow_style = False
     # Preserve OrderedDict ordering
-    yml.Representer.add_representer(
-        OrderedDict,
-        lambda dumper, data: dumper.represent_mapping(
-            "tag:yaml.org,2002:map", data
-        ),
-    )
+    def _represent_ordereddict(dumper: Any, data: Any) -> Any:
+        return dumper.represent_mapping("tag:yaml.org,2002:map", data)
+
+    yml.Representer.add_representer(OrderedDict, _represent_ordereddict)
 
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)

@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Generator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -15,8 +17,8 @@ from llm_router.config import (
     ProviderConfig,
     RoutingConfig,
     RoutingRule,
-    _resolve_env_vars,
-    _validate_model_references,
+    resolve_env_vars,
+    validate_model_references,
     get_config,
     init_config,
     load_config,
@@ -27,12 +29,10 @@ from llm_router.config import (
 # ── Fixture: reset module-level globals between tests ──────────────
 
 @pytest.fixture(autouse=True)
-def _reset_config_globals():
+def _reset_config_globals() -> Generator[None, None, None]:  # pyright: ignore[reportUnusedFunction]
     """Reset module globals so each test starts clean."""
     yield
-    cfg_mod._config = None
-    cfg_mod._config_path = ""
-    cfg_mod._config_mtime = 0.0
+    cfg_mod.reset_config()
 
 
 # ── 1. Pydantic model defaults & validation ────────────────────────
@@ -71,42 +71,42 @@ class TestPydanticModels:
 
     def test_invalid_log_level_raises(self):
         with pytest.raises(ValidationError):
-            Config(server={"log_level": "invalid"})
+            Config(server={"log_level": "invalid"})  # type: ignore[arg-type]
 
     def test_invalid_auth_type_raises(self):
         with pytest.raises(ValidationError):
             ProviderConfig(
                 type="anthropic",
                 base_url="https://x.com",
-                auth={"type": "invalid"},
+                auth={"type": "invalid"},  # type: ignore[arg-type]
             )
 
 
 # ── 2. _resolve_env_vars ───────────────────────────────────────────
 
 class TestResolveEnvVars:
-    def test_existing_var_replaced(self, monkeypatch):
+    def test_existing_var_replaced(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("MY_TEST_VAR", "hello")
-        assert _resolve_env_vars("${MY_TEST_VAR}") == "hello"
+        assert resolve_env_vars("${MY_TEST_VAR}") == "hello"
 
     def test_nonexistent_var_replaced_with_empty(self):
         key = "ABSOLUTELY_NONEXISTENT_VAR_12345"
         os.environ.pop(key, None)
-        assert _resolve_env_vars(f"${{{key}}}") == ""
+        assert resolve_env_vars(f"${{{key}}}") == ""
 
     def test_no_pattern_unchanged(self):
-        assert _resolve_env_vars("plain text") == "plain text"
+        assert resolve_env_vars("plain text") == "plain text"
 
-    def test_multiple_vars(self, monkeypatch):
+    def test_multiple_vars(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("A_VAR", "foo")
         monkeypatch.setenv("B_VAR", "bar")
-        result = _resolve_env_vars("${A_VAR}:${B_VAR}")
+        result = resolve_env_vars("${A_VAR}:${B_VAR}")
         assert result == "foo:bar"
 
-    def test_mixed_existing_and_missing(self, monkeypatch):
+    def test_mixed_existing_and_missing(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("EXIST_VAR", "yes")
         os.environ.pop("MISS_VAR", None)
-        result = _resolve_env_vars("${EXIST_VAR}-${MISS_VAR}")
+        result = resolve_env_vars("${EXIST_VAR}-${MISS_VAR}")
         assert result == "yes-"
 
 
@@ -130,7 +130,7 @@ routing:
         assert cfg.server.log_level == "debug"
         assert cfg.routing.default_model == "my-model"
 
-    def test_load_with_env_var_substitution(self, tmp_path: Path, monkeypatch):
+    def test_load_with_env_var_substitution(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("TEST_PORT", "7777")
         yaml_content = """\
 version: 1
@@ -168,9 +168,9 @@ routing:
 # ── 4. _validate_model_references ──────────────────────────────────
 
 class TestValidateModelReferences:
-    def _make_config(self, **overrides) -> Config:
+    def _make_config(self, **overrides: Any) -> Config:
         """Helper to build Config with providers that list known models."""
-        defaults = dict(
+        defaults: dict[str, Any] = dict(
             providers={
                 "main": ProviderConfig(
                     type="anthropic",
@@ -181,22 +181,22 @@ class TestValidateModelReferences:
             routing=RoutingConfig(default_model="model-a"),
         )
         defaults.update(overrides)
-        return Config(**defaults)
+        return Config(**defaults)  # type: ignore[arg-type]
 
     def test_valid_refs_no_error(self):
         cfg = self._make_config()
-        _validate_model_references(cfg)  # should not raise
+        validate_model_references(cfg)  # should not raise
 
     def test_no_providers_skips_validation(self):
         cfg = Config()  # no providers
-        _validate_model_references(cfg)  # should not raise
+        validate_model_references(cfg)  # should not raise
 
     def test_default_model_unknown_raises(self):
         cfg = self._make_config(
             routing=RoutingConfig(default_model="nonexistent"),
         )
         with pytest.raises(ValueError, match="routing.default_model"):
-            _validate_model_references(cfg)
+            validate_model_references(cfg)
 
     def test_routing_rule_unknown_model_raises(self):
         cfg = self._make_config(
@@ -212,14 +212,14 @@ class TestValidateModelReferences:
             ),
         )
         with pytest.raises(ValueError, match="rule 'bad' references unknown model"):
-            _validate_model_references(cfg)
+            validate_model_references(cfg)
 
     def test_fallback_tier_unknown_model_raises(self):
         cfg = self._make_config(
             fallback=FallbackConfig(tiers={"T1": ["model-a", "ghost"]}),
         )
         with pytest.raises(ValueError, match="fallback tier 'T1' references unknown model"):
-            _validate_model_references(cfg)
+            validate_model_references(cfg)
 
     def test_global_override_unknown_raises(self):
         cfg = self._make_config(
@@ -229,7 +229,7 @@ class TestValidateModelReferences:
             ),
         )
         with pytest.raises(ValueError, match="routing.global_override"):
-            _validate_model_references(cfg)
+            validate_model_references(cfg)
 
     def test_fallback_model_unknown_raises(self):
         cfg = self._make_config(
@@ -246,7 +246,7 @@ class TestValidateModelReferences:
             ),
         )
         with pytest.raises(ValueError, match="fallback_model references unknown model"):
-            _validate_model_references(cfg)
+            validate_model_references(cfg)
 
 
 # ── 5. init_config / get_config / hot-reload ───────────────────────
@@ -299,8 +299,8 @@ class TestSaveConfig:
         save_config(new_cfg)
 
         # Verify file content
-        from ruamel.yaml import YAML
-        yml = YAML()
+        from ruamel.yaml import YAML  # type: ignore[import-untyped]
+        yml: Any = YAML()
         data = yml.load(p.read_text(encoding="utf-8"))
         assert data["routing"]["default_model"] == "saved-model"
 
