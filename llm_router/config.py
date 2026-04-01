@@ -298,7 +298,7 @@ class Settings(BaseSettings):
     upstream_url: str = "http://localhost:8080"
     upstream_api_key: str = ""
     port: int = 8100
-    rules_path: str = "./rules.json"
+    rules_path: str = "./config.yaml"
     stats_path: str = "./stats.jsonl"
     openai_upstream_url: str = "http://localhost:8081"
     vertex_upstream_url: str = "http://localhost:8082"

@@ -126,7 +126,6 @@ async def _non_stream_proxy(
     anthropic_beta: str | None,
 ) -> JSONResponse:
     cfg = get_config()
-    retry_statuses = set(cfg.fallback.retry_on_status)
 
     # Use tier from route result, or infer from model
     if route.tier:
@@ -184,7 +183,7 @@ async def _non_stream_proxy(
             current_model, resp.status_code, attempt + 1, 1 + max_retries,
         )
 
-        if resp.status_code not in retry_statuses or attempt >= max_retries:
+        if attempt >= max_retries:
             try:
                 error_content = _sanitize_error(resp.json(), resp.status_code)
             except Exception:
@@ -320,7 +319,6 @@ async def _stream_proxy(
 ) -> StreamingResponse:
     async def event_generator():
         cfg = get_config()
-        retry_statuses = set(cfg.fallback.retry_on_status)
 
         # Use tier from route result, or infer from model
         if route.tier:
@@ -368,7 +366,7 @@ async def _stream_proxy(
                     await resp.aread()  # consume response body
                     fallback_module.record_failure(current_model)
 
-                    if resp.status_code in retry_statuses and attempt < max_retries:
+                    if attempt < max_retries:
                         next_model = fallback_module.get_fallback_model(current_model, rules_compat, tier=tier)
                         if next_model:
                             logger.info("stream falling back from %s to %s", current_model, next_model)
@@ -558,7 +556,6 @@ async def _oai_non_stream_proxy(
 ) -> JSONResponse:
     """OpenAI format non-streaming proxy with fallback."""
     cfg = get_config()
-    retry_statuses = set(cfg.fallback.retry_on_status)
 
     if route.tier:
         tier = route.tier
@@ -606,7 +603,7 @@ async def _oai_non_stream_proxy(
         fallback_module.record_failure(current_model)
         logger.warning("oai model %s returned %d (attempt %d/%d)", current_model, resp.status_code, attempt + 1, 1 + max_retries)
 
-        if resp.status_code not in retry_statuses or attempt >= max_retries:
+        if attempt >= max_retries:
             try:
                 return JSONResponse(content=resp.json(), status_code=resp.status_code)
             except Exception:
@@ -632,7 +629,6 @@ async def _oai_stream_proxy(
     """OpenAI format streaming proxy with fallback."""
     async def event_generator():
         cfg = get_config()
-        retry_statuses = set(cfg.fallback.retry_on_status)
 
         if route.tier:
             tier = route.tier
@@ -663,7 +659,7 @@ async def _oai_stream_proxy(
                     await resp.aread()
                     fallback_module.record_failure(current_model)
 
-                    if resp.status_code in retry_statuses and attempt < max_retries:
+                    if attempt < max_retries:
                         next_model = fallback_module.get_fallback_model(current_model, rules_compat, tier=tier)
                         if next_model:
                             logger.info("oai stream falling back from %s to %s", current_model, next_model)
