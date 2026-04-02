@@ -124,7 +124,6 @@ fallback:
   circuit_breaker:
     failure_threshold: 3
     recovery_seconds: 300
-  retry_on_status: [429, 500, 502, 503]
 
 # ── Metadata injection ─────────────────────────────────
 metadata:

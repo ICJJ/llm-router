@@ -123,7 +123,6 @@ class FallbackConfig(BaseModel):
     tiers: dict[str, list[str]] = {}
     max_retries: int = 8
     circuit_breaker: CircuitBreakerConfig = CircuitBreakerConfig()
-    retry_on_status: list[int] = [429, 500, 502, 503]
 
 
 class MetadataConfig(BaseModel):

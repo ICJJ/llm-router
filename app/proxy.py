@@ -233,14 +233,6 @@ async def _non_stream_proxy(
             current_model, resp.status_code, attempt + 1, 1 + max_retries,
         )
 
-        # Only retry on configured status codes
-        if resp.status_code not in cfg.fallback.retry_on_status:
-            try:
-                error_content = _sanitize_error(resp.json(), resp.status_code)
-            except Exception:
-                error_content = _sanitize_error(None, resp.status_code)
-            return JSONResponse(content=error_content, status_code=resp.status_code)
-
         if attempt >= max_retries:
             try:
                 error_content = _sanitize_error(resp.json(), resp.status_code)
@@ -450,11 +442,6 @@ async def _stream_proxy(
                     await resp.aread()  # consume response body
                     fallback_module.record_failure(current_model)
                     performance.get_tracker().record(current_model, (time.monotonic() - attempt_t0) * 1000, 0, False)
-
-                    # Only retry on configured status codes
-                    if resp.status_code not in cfg.fallback.retry_on_status:
-                        yield f"data: {json.dumps(_sanitize_error(None, resp.status_code))}\n\n"
-                        return
 
                     if attempt < max_retries:
                         next_model = fallback_module.get_fallback_model(current_model, rules_compat, tier=tier)
@@ -816,13 +803,6 @@ async def _oai_non_stream_proxy(
         performance.get_tracker().record(current_model, elapsed * 1000, 0, False)
         logger.warning("oai model %s returned %d (attempt %d/%d)", current_model, resp.status_code, attempt + 1, 1 + max_retries)
 
-        # Only retry on configured status codes
-        if resp.status_code not in cfg.fallback.retry_on_status:
-            try:
-                return JSONResponse(content=_sanitize_error(resp.json(), resp.status_code), status_code=resp.status_code)
-            except Exception:
-                return JSONResponse(content=_sanitize_error(None, resp.status_code), status_code=resp.status_code)
-
         if attempt >= max_retries:
             try:
                 error_content = _sanitize_error(resp.json(), resp.status_code)
@@ -887,11 +867,6 @@ async def _oai_stream_proxy(
                     await resp.aread()
                     fallback_module.record_failure(current_model)
                     performance.get_tracker().record(current_model, (time.monotonic() - attempt_t0) * 1000, 0, False)
-
-                    # Only retry on configured status codes
-                    if resp.status_code not in cfg.fallback.retry_on_status:
-                        yield f"data: {json.dumps(_sanitize_error(None, resp.status_code))}\n\n"
-                        return
 
                     if attempt < max_retries:
                         next_model = fallback_module.get_fallback_model(current_model, rules_compat, tier=tier)
