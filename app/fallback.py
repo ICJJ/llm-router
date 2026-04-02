@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import time
+import warnings
 from dataclasses import dataclass
 from typing import Any
 
-from .config import get_settings
+from .config import get_config
 
 
 @dataclass
@@ -15,6 +16,8 @@ class _ModelState:
     is_healthy: bool = True
 
 
+# NOTE: Not thread-safe. Safe under single-worker async (uvicorn default).
+# For multi-worker deployment, use shared state (e.g. Redis) instead.
 _health: dict[str, _ModelState] = {}
 
 
@@ -29,9 +32,9 @@ def is_healthy(model: str) -> bool:
     state = _get_state(model)
     if state.is_healthy:
         return True
-    settings = get_settings()
+    cfg = get_config()
     elapsed = time.monotonic() - state.last_failure_time
-    if elapsed >= settings.fallback_recovery_seconds:
+    if elapsed >= cfg.fallback.circuit_breaker.recovery_seconds:
         state.is_healthy = True
         state.consecutive_failures = 0
         return True
@@ -43,8 +46,8 @@ def record_failure(model: str) -> None:
     state = _get_state(model)
     state.consecutive_failures += 1
     state.last_failure_time = time.monotonic()
-    settings = get_settings()
-    if state.consecutive_failures >= settings.fallback_failure_threshold:
+    cfg = get_config()
+    if state.consecutive_failures >= cfg.fallback.circuit_breaker.failure_threshold:
         state.is_healthy = False
 
 
@@ -120,16 +123,31 @@ def resolve_deployment(model: str, rules: dict[str, Any]) -> str:
 
 
 def is_gpt5_model(model: str) -> bool:
-    """Check if model is GPT-5.x (requires different API parameters)."""
+    """Check if model is GPT-5.x (requires different API parameters).
+
+    .. deprecated:: 0.2.0
+        Use ``ProviderRegistry.get_provider_type(model)`` instead.
+    """
+    warnings.warn(
+        "is_gpt5_model() is deprecated, use ProviderRegistry.get_provider_type()",
+        DeprecationWarning, stacklevel=2,
+    )
     return model.startswith("gpt-5")
 
 
 def is_openai_model(model: str, rules: dict[str, Any] | None = None) -> bool:
-    """Check whether *model* is an OpenAI model."""
+    """Check whether *model* is an OpenAI model.
+
+    .. deprecated:: 0.2.0
+        Use ``ProviderRegistry.get_provider_type(model)`` instead.
+    """
+    warnings.warn(
+        "is_openai_model() is deprecated, use ProviderRegistry.get_provider_type()",
+        DeprecationWarning, stacklevel=2,
+    )
     if model.startswith("gpt-"):
         return True
     if rules is None:
-        from .config import get_config
         cfg = get_config()
         openai_models = {m for _, p in cfg.providers.items()
                          if p.type == "openai" for m in p.models}
@@ -139,11 +157,18 @@ def is_openai_model(model: str, rules: dict[str, Any] | None = None) -> bool:
 
 
 def is_vertex_model(model: str, rules: dict[str, Any] | None = None) -> bool:
-    """Check whether *model* is a Vertex AI model (e.g. Gemini)."""
+    """Check whether *model* is a Vertex AI model (e.g. Gemini).
+
+    .. deprecated:: 0.2.0
+        Use ``ProviderRegistry.get_provider_type(model)`` instead.
+    """
+    warnings.warn(
+        "is_vertex_model() is deprecated, use ProviderRegistry.get_provider_type()",
+        DeprecationWarning, stacklevel=2,
+    )
     if model.startswith("gemini-"):
         return True
     if rules is None:
-        from .config import get_config
         cfg = get_config()
         vertex_models = {m for _, p in cfg.providers.items()
                          if p.type == "vertex" for m in p.models}

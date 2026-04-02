@@ -16,6 +16,75 @@ _STOP_REASON_MAP: dict[str | None, str] = {
     "tool_calls": "tool_use",
 }
 
+_VERTEX_FINISH_MAP: dict[str | None, str] = {
+    "MAX_TOKENS": "length",
+    "STOP": "stop",
+}
+
+
+def normalize_amd_response(resp_body: Any) -> dict[str, Any]:
+    """Normalize AMD Gateway's non-standard response formats to OpenAI format.
+
+    AMD Gateway returns different formats depending on provider:
+    - Azure OpenAI: standard OpenAI format (pass through)
+    - Unified endpoint: {"response": {"role": "...", "content": "..."}}
+    - VertexAI native: [{"candidates": [...], "usageMetadata": {...}}]
+    """
+    # Standard OpenAI format — pass through
+    if isinstance(resp_body, dict) and "choices" in resp_body:
+        return resp_body
+
+    # AMD unified simplified format: {"response": {...}}
+    if isinstance(resp_body, dict) and "response" in resp_body:
+        r = resp_body["response"]
+        role = r.get("role", "assistant")
+        if role == "model":
+            role = "assistant"
+        return {
+            "id": f"chatcmpl-amd-{resp_body.get('deployment', 'unknown')}",
+            "object": "chat.completion",
+            "model": resp_body.get("model", ""),
+            "choices": [{
+                "index": 0,
+                "message": {"role": role, "content": r.get("content", "")},
+                "finish_reason": _VERTEX_FINISH_MAP.get(r.get("finishReason"), "stop"),
+            }],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+        }
+
+    # VertexAI native format: [{"candidates": [...]}]
+    if isinstance(resp_body, list) and resp_body:
+        item = resp_body[0]
+        if isinstance(item, dict) and "candidates" in item:
+            candidates = item.get("candidates", [])
+            text = ""
+            finish = "stop"
+            if candidates:
+                c = candidates[0]
+                parts = c.get("content", {}).get("parts", [])
+                text = "".join(p.get("text", "") for p in parts)
+                finish = _VERTEX_FINISH_MAP.get(c.get("finishReason"), "stop")
+            usage_meta = item.get("usageMetadata", {})
+            return {
+                "id": f"chatcmpl-vertex-{item.get('responseId', 'unknown')}",
+                "object": "chat.completion",
+                "model": item.get("modelVersion", ""),
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": text},
+                    "finish_reason": finish,
+                }],
+                "usage": {
+                    "prompt_tokens": usage_meta.get("promptTokenCount", 0),
+                    "completion_tokens": usage_meta.get("candidatesTokenCount", 0),
+                },
+            }
+
+    # Unknown format — return as-is (will likely fail later, but better than swallowing)
+    if isinstance(resp_body, dict):
+        return resp_body
+    return {"choices": [], "usage": {"prompt_tokens": 0, "completion_tokens": 0}}
+
 
 def _flatten_content(content: str | list[dict[str, Any]]) -> str:
     """Flatten Anthropic content blocks to a plain string."""
@@ -52,8 +121,9 @@ def anthropic_to_openai(body: dict[str, Any], target_model: str) -> dict[str, An
         "messages": oai_messages,
     }
 
-    # GPT-5.x uses max_completion_tokens instead of max_tokens
-    is_gpt5 = target_model.startswith("gpt-5")
+    # Newer OpenAI models use max_completion_tokens instead of max_tokens
+    _NEW_API_MODELS = ("gpt-5", "gpt-4.1", "o3", "o4")
+    uses_new_api = target_model.startswith(_NEW_API_MODELS)
 
     for key in ("temperature", "top_p", "stream"):
         if key in body:
@@ -64,7 +134,7 @@ def anthropic_to_openai(body: dict[str, Any], target_model: str) -> dict[str, An
         result["stream_options"] = {"include_usage": True}
 
     if "max_tokens" in body:
-        if is_gpt5:
+        if uses_new_api:
             result["max_completion_tokens"] = body["max_tokens"]
         else:
             result["max_tokens"] = body["max_tokens"]

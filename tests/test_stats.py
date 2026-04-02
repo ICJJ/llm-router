@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from llm_router import stats
+from app import stats
 
 
 def _stats_path() -> str:

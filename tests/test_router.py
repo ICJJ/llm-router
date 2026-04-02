@@ -1,10 +1,10 @@
-"""Tests for the declarative rule engine in llm_router.router."""
+"""Tests for the declarative rule engine in app.router."""
 from __future__ import annotations
 
 from typing import Any
 
-from llm_router.config import Config, RoutingConfig
-from llm_router.router import route, content_to_text, RouteResult, _extract_session_key  # pyright: ignore[reportPrivateUsage]
+from app.config import Config, RoutingConfig
+from app.router import route, content_to_text, RouteResult, _extract_session_key  # pyright: ignore[reportPrivateUsage]
 
 
 def _make_config(**routing_kwargs: Any) -> Config:

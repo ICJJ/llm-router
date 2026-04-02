@@ -6,9 +6,9 @@ from typing import Any
 import pytest
 from ruamel.yaml import YAML  # type: ignore[import-untyped]
 
-from llm_router.config import init_config, get_config, save_config, KeywordWeight
-import llm_router.config as config_mod
-from llm_router.commands import execute, is_route_command
+from app.config import init_config, get_config, save_config, KeywordWeight
+import app.config as config_mod
+from app.commands import execute, is_route_command
 
 
 @pytest.fixture(autouse=True)
@@ -203,7 +203,7 @@ def test_health_no_data():
 
 
 def test_health_with_data():
-    from llm_router import fallback
+    from app import fallback
     fallback._health.clear()  # pyright: ignore[reportPrivateUsage]
     fallback.record_success("claude-opus-4-6")
     for _ in range(3):

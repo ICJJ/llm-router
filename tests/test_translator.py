@@ -8,7 +8,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from llm_router.translator import (
+from app.translator import (
     _flatten_content,  # pyright: ignore[reportPrivateUsage]
     anthropic_to_openai,
     openai_to_anthropic,
@@ -63,7 +63,7 @@ class TestAnthropicToOpenai:
         result = anthropic_to_openai(body, "gpt-4.1")
         assert result["model"] == "gpt-4.1"
         assert result["messages"] == [{"role": "user", "content": "hello"}]
-        assert result["max_tokens"] == 1024
+        assert result["max_completion_tokens"] == 1024
 
     def test_system_prompt_becomes_system_message(self):
         body: dict[str, Any] = {
@@ -123,7 +123,7 @@ class TestAnthropicToOpenai:
             "stream": True,
         }
         result = anthropic_to_openai(body, "gpt-4.1")
-        assert result["max_tokens"] == 2048
+        assert result["max_completion_tokens"] == 2048
         assert result["temperature"] == 0.7
         assert result["top_p"] == 0.9
         assert result["stream"] is True
@@ -492,7 +492,7 @@ class TestFlattenContentWarning:
             {"type": "text", "text": "hello"},
             {"type": "tool_use", "id": "t1", "name": "calc", "input": {}},
         ]
-        with patch("llm_router.translator.logger") as mock_logger:
+        with patch("app.translator.logger") as mock_logger:
             result = _flatten_content(blocks)
             assert result == "hello"
             mock_logger.warning.assert_called_once()
@@ -505,7 +505,7 @@ class TestFlattenContentWarning:
             {"type": "thinking", "thinking": "..."},
             {"type": "text", "text": "result"},
         ]
-        with patch("llm_router.translator.logger") as mock_logger:
+        with patch("app.translator.logger") as mock_logger:
             result = _flatten_content(blocks)
             assert result == "result"
             mock_logger.warning.assert_called_once()
@@ -517,7 +517,7 @@ class TestFlattenContentWarning:
             {"type": "thinking", "thinking": "..."},
             {"type": "text", "text": "ok"},
         ]
-        with patch("llm_router.translator.logger") as mock_logger:
+        with patch("app.translator.logger") as mock_logger:
             result = _flatten_content(blocks)
             assert result == "ok"
             mock_logger.warning.assert_called_once()
@@ -531,13 +531,13 @@ class TestFlattenContentWarning:
             {"type": "text", "text": "hello"},
             {"type": "text", "text": " world"},
         ]
-        with patch("llm_router.translator.logger") as mock_logger:
+        with patch("app.translator.logger") as mock_logger:
             result = _flatten_content(blocks)
             assert result == "hello world"
             mock_logger.warning.assert_not_called()
 
     def test_string_input_no_warning(self):
-        with patch("llm_router.translator.logger") as mock_logger:
+        with patch("app.translator.logger") as mock_logger:
             result = _flatten_content("just a string")
             assert result == "just a string"
             mock_logger.warning.assert_not_called()

@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI):
     if not config_path.exists():
         msg = (
             f"YAML config 文件未提供: {config_path.resolve()}\n"
-            f"请创建 config.yaml 或设置环境变量 LLM_ROUTER_RULES_PATH 指向有效的 YAML 配置文件。\n"
+            f"请创建 llm-router.yaml，或设置环境变量 LLM_ROUTER_RULES_PATH 指向有效的 YAML 配置文件。\n"
             f"参考 config.example.yaml 创建配置。"
         )
         logger.critical(msg)

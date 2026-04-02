@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from llm_router import fallback
-from llm_router.config import Settings
+from app import fallback
+from app.config import Config, CircuitBreakerConfig, FallbackConfig
 
 
 @pytest.fixture(autouse=True)
@@ -20,12 +20,16 @@ def _reset_health_state():  # pyright: ignore[reportUnusedFunction]
 
 @pytest.fixture(autouse=True)
 def _mock_settings(monkeypatch: pytest.MonkeyPatch):  # pyright: ignore[reportUnusedFunction]
-    """Provide deterministic settings for all tests."""
-    settings = Settings(
-        fallback_failure_threshold=3,
-        fallback_recovery_seconds=300,
+    """Provide deterministic config for all tests."""
+    cfg = Config(
+        fallback=FallbackConfig(
+            circuit_breaker=CircuitBreakerConfig(
+                failure_threshold=3,
+                recovery_seconds=300,
+            ),
+        ),
     )
-    monkeypatch.setattr("llm_router.fallback.get_settings", lambda: settings)
+    monkeypatch.setattr("app.fallback.get_config", lambda: cfg)
 
 
 RULES_WITH_FALLBACK: dict[str, Any] = {

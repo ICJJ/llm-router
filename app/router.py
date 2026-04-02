@@ -7,6 +7,8 @@ from typing import Any
 
 from .config import Config, RoutingRule, MatchRule
 
+_MODEL_HINT_RE = re.compile(r"\[model:([a-zA-Z0-9._-]+)\]")
+
 
 @dataclass
 class RouteResult:
@@ -64,6 +66,8 @@ def _evaluate_rule(
     match = rule.match
     text = _get_field_text(match.field, system_text, user_text, all_text)
 
+    if match.type == "model_hint":
+        return _eval_model_hint(text, session_key)
     if match.type == "pattern":
         return _eval_pattern(rule, match, text, session_key)
     if match.type == "keyword":
@@ -71,6 +75,20 @@ def _evaluate_rule(
     if match.type == "length":
         return _eval_length(rule, match, text, session_key)
     return None
+
+
+def _eval_model_hint(text: str, session_key: str) -> RouteResult | None:
+    """Extract [model:xxx] hint from text and route to that model."""
+    m = _MODEL_HINT_RE.search(text)
+    if not m:
+        return None
+    model = m.group(1)
+    return RouteResult(
+        model=model,
+        reason=f"model_hint:{model}",
+        level=1,
+        session_key=session_key,
+    )
 
 
 def _get_field_text(field: str, system_text: str, user_text: str, all_text: str) -> str:

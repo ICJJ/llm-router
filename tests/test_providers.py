@@ -1,13 +1,13 @@
-"""Tests for llm_router.providers – Phase 2 Provider Registry."""
+"""Tests for app.providers – Phase 2 Provider Registry."""
 from __future__ import annotations
 
 from collections.abc import Generator
 
 import pytest
 
-import llm_router.providers as prov_mod
-from llm_router.config import AuthConfig, ProviderConfig
-from llm_router.providers import (
+import app.providers as prov_mod
+from app.config import AuthConfig, ProviderConfig
+from app.providers import (
     ProviderRegistry,
     ResolvedProvider,
     get_registry,
@@ -287,7 +287,7 @@ class TestModuleLevelFunctions:
         class FakeConfig:
             providers = fake_providers
 
-        monkeypatch.setattr("llm_router.config.get_config", lambda: FakeConfig())
+        monkeypatch.setattr("app.config.get_config", lambda: FakeConfig())
         reg = get_registry()
         assert isinstance(reg, ProviderRegistry)
         assert "fake-model" in reg.all_models
@@ -299,7 +299,7 @@ class TestModuleLevelFunctions:
             providers = {}
 
         sentinel_registry = ProviderRegistry(providers={"v": VERTEX_CFG})
-        monkeypatch.setattr("llm_router.config.get_config", lambda: FakeConfig())
+        monkeypatch.setattr("app.config.get_config", lambda: FakeConfig())
         monkeypatch.setattr(prov_mod, "_build_legacy_registry", lambda: sentinel_registry)
         reg = get_registry()
         assert reg is sentinel_registry

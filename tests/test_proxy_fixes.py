@@ -10,9 +10,9 @@ from unittest.mock import patch
 
 import pytest
 
-from llm_router import stats
-from llm_router.router import RouteResult
-from llm_router.proxy import _finalize_stream, _flush_sse_event, _process_sse_event, _record_stats, _sanitize_error  # pyright: ignore[reportPrivateUsage]
+from app import stats
+from app.router import RouteResult
+from app.proxy import _finalize_stream, _flush_sse_event, _process_sse_event, _record_stats, _sanitize_error  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclass
@@ -150,7 +150,7 @@ class TestProcessSseEvent:
 
         data = json.dumps({"delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 20}})
 
-        with patch("llm_router.proxy.metadata.build_streaming_event") as mock_build:
+        with patch("app.proxy.metadata.build_streaming_event") as mock_build:
             mock_build.return_value = "event: content_block_delta\ndata: {}\n\n"
             _process_sse_event("message_delta", data, state, route, inject_cfg)  # pyright: ignore[reportArgumentType]
             mock_build.assert_called_once()
@@ -173,7 +173,7 @@ class TestProcessSseEvent:
         inject_cfg: dict[str, Any] = {"enabled": True}
         data = json.dumps({"delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 5}})
 
-        with patch("llm_router.proxy.metadata.build_streaming_event") as mock_build:
+        with patch("app.proxy.metadata.build_streaming_event") as mock_build:
             mock_build.return_value = None
             _process_sse_event("message_delta", data, state, route, inject_cfg)  # pyright: ignore[reportArgumentType]
             assert mock_build.call_args[0][0] == "claude-sonnet-4-6"
@@ -192,7 +192,7 @@ class TestFinalizeStream:
         }
         body: dict[str, Any] = {"model": "claude-opus-4-6"}
 
-        with patch("llm_router.proxy._fire_and_forget"):
+        with patch("app.proxy._fire_and_forget"):
             _finalize_stream(body, route, time.monotonic() - 1.0, state, [])  # pyright: ignore[reportArgumentType]
 
         lines = (tmp_path / "stats.jsonl").read_text(encoding="utf-8").strip().splitlines()
@@ -208,7 +208,7 @@ class TestFinalizeStream:
         }
         body: dict[str, Any] = {"model": "claude-opus-4-6"}
 
-        with patch("llm_router.proxy._fire_and_forget"):
+        with patch("app.proxy._fire_and_forget"):
             _finalize_stream(body, route, time.monotonic(), state, [])  # pyright: ignore[reportArgumentType]
 
         lines = (tmp_path / "stats.jsonl").read_text(encoding="utf-8").strip().splitlines()
@@ -224,7 +224,7 @@ class TestFinalizeStream:
         }
         body: dict[str, Any] = {"model": "claude-sonnet-4-6"}
 
-        with patch("llm_router.proxy._fire_and_forget"):
+        with patch("app.proxy._fire_and_forget"):
             _finalize_stream(body, route, time.monotonic(), state, [])  # pyright: ignore[reportArgumentType]
 
         lines = (tmp_path / "stats.jsonl").read_text(encoding="utf-8").strip().splitlines()

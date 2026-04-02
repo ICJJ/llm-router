@@ -14,6 +14,7 @@ def format_line(
     output_tokens: int,
     reason: str | None = None,
     *,
+    stop_reason: str | None = None,
     include_model: bool = True,
     include_elapsed: bool = True,
     include_tokens: bool = True,
@@ -33,6 +34,8 @@ def format_line(
         parts.append(f"📊 {output_tokens:,} tokens")
     if include_reason and reason:
         parts.append(f"📌 {reason}")
+    if stop_reason == "max_tokens":
+        parts.append("⚠️ 截断")
     return "\n\n---\n" + " | ".join(parts)
 
 
@@ -60,6 +63,7 @@ def inject_non_streaming(
         elapsed_s,
         output_tokens,
         reason,
+        stop_reason=stop_reason,
         include_model=cfg.get("include_model", True),
         include_elapsed=cfg.get("include_elapsed", True),
         include_tokens=cfg.get("include_tokens", True),
@@ -82,6 +86,7 @@ def build_streaming_event(
     output_tokens: int,
     reason: str | None = None,
     *,
+    stop_reason: str | None = None,
     block_index: int = 0,
     config: dict[str, Any] | None = None,
 ) -> str | None:
@@ -98,6 +103,7 @@ def build_streaming_event(
         elapsed_s,
         output_tokens,
         reason,
+        stop_reason=stop_reason,
         include_model=cfg.get("include_model", True),
         include_elapsed=cfg.get("include_elapsed", True),
         include_tokens=cfg.get("include_tokens", True),

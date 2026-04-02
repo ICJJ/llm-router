@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from .config import get_config, save_config
+from .config import Config, get_config, save_config
 
 logger = logging.getLogger("llm-router.learner")
 
@@ -53,9 +53,11 @@ def _update_weights(
     min_w: float,
     max_w: float,
     now_str: str,
+    cfg: Config | None = None,
 ) -> None:
     """Apply weight adjustments to matched keywords in-place on the config."""
-    cfg = get_config()
+    if cfg is None:
+        cfg = get_config()
     for rule in cfg.routing.rules:
         if rule.match.type != "keyword":
             continue
@@ -96,21 +98,23 @@ async def learn(
     favour_opus = _should_favour_opus(response_body, elapsed_s)
 
     async with _learn_lock:
+        cfg = get_config()
         now_str = datetime.now(timezone.utc).isoformat()
         _update_weights(
             matched, favour_opus,
             cfg_snapshot["alpha"], cfg_snapshot["min_weight"], cfg_snapshot["max_weight"], now_str,
+            cfg,
         )
-        await asyncio.to_thread(save_config, get_config())
+        await asyncio.to_thread(save_config, cfg)
     logger.debug("learned from %d keywords, favour_opus=%s", len(matched), favour_opus)
 
 
 def _should_favour_opus(body: dict[str, Any], elapsed_s: float) -> bool:
     """Determine if the response characteristics suggest Opus is more appropriate."""
-    usage = body.get("usage", {})
+    usage: dict[str, Any] = body.get("usage", {})
     content: list[dict[str, Any]] = body.get("content", [])
-    predicates = [
-        usage.get("output_tokens", 0) > 3000,
+    predicates: list[bool] = [
+        int(usage.get("output_tokens", 0)) > 3000,
         sum(1 for b in content if b.get("type") == "tool_use") > 2,
         any(b.get("type") == "thinking" for b in content),
         elapsed_s > 30,

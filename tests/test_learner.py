@@ -7,9 +7,9 @@ from typing import Any
 import pytest
 from ruamel.yaml import YAML  # type: ignore[import-untyped]
 
-from llm_router.config import init_config, get_config, save_config, KeywordWeight
-import llm_router.config as config_mod
-from llm_router.learner import learn
+from app.config import init_config, get_config, save_config, KeywordWeight
+import app.config as config_mod
+from app.learner import learn
 
 
 @pytest.fixture(autouse=True)

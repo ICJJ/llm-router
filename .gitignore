@@ -7,6 +7,11 @@ dist/
 build/
 *.egg
 
+# Runtime output
+out/
+stats.jsonl
+tmp/
+
 # Virtual environments
 .venv/
 venv/
@@ -34,6 +39,8 @@ debug_*.py
 *.orig
 *.tmp
 test_output.txt
+tmp/
+stats.jsonl
 
 # Internal docs (not for distribution)
 SPEC.md

@@ -1,5 +1,5 @@
-# llm-router config.yaml — example configuration
-# Copy to config.yaml and customize for your environment.
+# llm-router.yaml — example configuration
+# Copy to llm-router.yaml and customize for your environment.
 
 version: 1                              # schema version for future migrations
 

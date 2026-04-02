@@ -1,4 +1,4 @@
-"""Tests for YAML-based configuration (llm_router.config)."""
+"""Tests for YAML-based configuration (app.config)."""
 from __future__ import annotations
 
 import os
@@ -9,8 +9,8 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-import llm_router.config as cfg_mod
-from llm_router.config import (
+import app.config as cfg_mod
+from app.config import (
     Config,
     FallbackConfig,
     MatchRule,

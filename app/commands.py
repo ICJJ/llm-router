@@ -10,19 +10,26 @@ from .router import content_to_text as _content_to_text
 
 
 MODEL_ALIASES = {
-    "opus": "claude-opus-4-6",
-    "sonnet": "claude-sonnet-4-6",
-    "claude-opus-4-6": "claude-opus-4-6",
-    "claude-sonnet-4-6": "claude-sonnet-4-6",
+    # OpenAI — strongest first
+    "gpt-5.4": "gpt-5.4",
+    "o3": "o3",
     "gpt-4.1": "gpt-4.1",
-    "gpt-4.1-mini": "gpt-4.1-mini",
-    "gpt-4.1-nano": "gpt-4.1-nano",
+    "o4-mini": "o4-mini",
     "gpt-4o": "gpt-4o",
     "gpt-4o-mini": "gpt-4o-mini",
-    "gpt-5.4": "gpt-5.4",
-    "gpt-5.4-mini": "gpt-5.4-mini",
-    "gpt-5.4-nano": "gpt-5.4-nano",
-    "gpt-5.3-chat": "gpt-5.3-chat",
+    # Gemini — strongest first
+    "gemini-3.1-pro": "gemini-3.1-pro-preview",
+    "gemini-3.1-pro-preview": "gemini-3.1-pro-preview",
+    "gemini-2.5-pro": "gemini-2.5-pro",
+    "gemini-2.5-flash": "gemini-2.5-flash",
+    "gemini-flash": "gemini-2.5-flash",
+    "gemini-3.1-flash-lite": "gemini-3.1-flash-lite-preview",
+    "gemini-3.1-flash-lite-preview": "gemini-3.1-flash-lite-preview",
+    # Shortcuts
+    "best": "gpt-5.4",
+    "reason": "o3",
+    "fast": "gemini-2.5-flash",
+    "stable": "gpt-4.1",
 }
 
 
@@ -40,7 +47,7 @@ def execute(messages: list[dict[str, Any]]) -> dict[str, Any]:
     text = _extract_command_text(messages)
     parts = text.split()
     if len(parts) < 2:
-        return _synth("用法: /route <add|del|list|force|stats|reset-learn|config>")
+        return _synth("用法: /route <add|del|list|force|stats|reset-learn|config|override|health>")
     return _dispatch_command(parts[1], parts, text)
 
 
@@ -73,10 +80,10 @@ _COMMAND_TABLE: dict[str, tuple[int, Callable[[list[str]], dict[str, Any]]]] = {
 def _dispatch_command(sub: str, parts: list[str], text: str) -> dict[str, Any]:
     entry = _COMMAND_TABLE.get(sub)
     if entry is None:
-        return _synth(f"未知命令: {text}\n用法: /route <add|del|list|force|stats|reset-learn|config>")
+        return _synth(f"未知命令: {text}\n用法: /route <add|del|list|force|stats|reset-learn|config|override|health>")
     min_args, handler = entry
     if min_args and len(parts) < min_args:
-        return _synth(f"未知命令: {text}\n用法: /route <add|del|list|force|stats|reset-learn|config>")
+        return _synth(f"未知命令: {text}\n用法: /route <add|del|list|force|stats|reset-learn|config|override|health>")
     return handler(parts)
 
 
@@ -108,9 +115,10 @@ def _cmd_list() -> dict[str, Any]:
 
 
 def _cmd_add(keyword: str, model_alias: str) -> dict[str, Any]:
-    model = MODEL_ALIASES.get(model_alias)
+    model = MODEL_ALIASES.get(model_alias, model_alias if model_alias in MODEL_ALIASES.values() else None)
     if not model:
-        return _synth(f"❌ 未知模型: {model_alias}\n可选: opus, sonnet")
+        shortcuts = "best, reason, fast, stable, gpt-5.4, o3, gemini-2.5-flash, gpt-4.1"
+        return _synth(f"❌ 未知模型: {model_alias}\n可选: {shortcuts}")
     cfg = get_config()
     # Find first keyword-type rule
     kw_rule = None
@@ -122,18 +130,19 @@ def _cmd_add(keyword: str, model_alias: str) -> dict[str, Any]:
         kw_rule = RoutingRule(
             name="keywords",
             match=MatchRule(type="keyword", field="all_text"),
-            model="claude-opus-4-6",
-            fallback_model="claude-sonnet-4-6",
+            model=cfg.routing.default_model,
+            fallback_model="gpt-4o",
         )
         cfg.routing.rules.append(kw_rule)
-    is_opus = "opus" in model
+    # Higher weight_a = prefer model A (the target model)
     kw_rule.match.keywords[keyword] = KeywordWeight(
-        weight_a=0.8 if is_opus else 0.2,
-        weight_b=0.2 if is_opus else 0.8,
+        weight_a=0.8,
+        weight_b=0.2,
         source="manual",
     )
     save_config(cfg)
-    return _synth(f"✅ 已添加关键词: {keyword} → {model}")
+    side_model = kw_rule.model
+    return _synth(f"✅ 已添加关键词: {keyword} (偏向 {side_model})")
 
 
 def _cmd_del(keyword: str) -> dict[str, Any]:
@@ -157,9 +166,10 @@ def _cmd_force(args: list[str]) -> dict[str, Any]:
 def _cmd_force_set(pattern: str, model_alias: str) -> dict[str, Any]:
     if len(pattern) < 2:
         return _synth("❌ pattern 长度至少 2 个字符")
-    model = MODEL_ALIASES.get(model_alias)
+    model = MODEL_ALIASES.get(model_alias, model_alias if model_alias in MODEL_ALIASES.values() else None)
     if not model:
-        return _synth(f"❌ 未知模型: {model_alias}\n可选: opus, sonnet")
+        shortcuts = "best, reason, fast, stable, gpt-5.4, o3, gemini-2.5-flash, gpt-4.1"
+        return _synth(f"❌ 未知模型: {model_alias}\n可选: {shortcuts}")
     cfg = get_config()
     # Update existing or add new pattern rule
     for rule in cfg.routing.rules:

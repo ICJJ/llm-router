@@ -1,6 +1,7 @@
 """YAML-based configuration with Pydantic v2 validation and hot-reload."""
 from __future__ import annotations
 
+import logging
 import os
 import re
 import sys
@@ -8,7 +9,9 @@ import threading
 from functools import lru_cache
 from io import IOBase
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
+
+_logger = logging.getLogger("llm-router.config")
 
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
@@ -19,13 +22,16 @@ if sys.platform == "win32":
     import msvcrt
 
     def _lock_shared(f: IOBase) -> None:
-        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        f.seek(0)
+        msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
 
     def _lock_exclusive(f: IOBase) -> None:
-        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        f.seek(0)
+        msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
 
     def _unlock(f: IOBase) -> None:
         try:
+            f.seek(0)
             msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
         except OSError:
             pass
@@ -73,7 +79,7 @@ class KeywordWeight(BaseModel):
 
 
 class MatchRule(BaseModel):
-    type: Literal["pattern", "keyword", "length", "header"]
+    type: Literal["pattern", "keyword", "length", "header", "model_hint"]
     field: str = "all_text"
     pattern: str | None = None
     extract: str | None = None
@@ -91,10 +97,19 @@ class RoutingRule(BaseModel):
     tier: str | None = None
 
 
+class PerformanceConfig(BaseModel):
+    enabled: bool = False
+    strategy: Literal["latency", "throughput"] = "latency"
+    candidates: list[str] = []
+    window_seconds: int = 3600
+    min_samples: int = 5
+
+
 class RoutingConfig(BaseModel):
     default_model: str
     global_override: str | None = None
     rules: list[RoutingRule] = []
+    performance: PerformanceConfig = PerformanceConfig()
 
 
 class CircuitBreakerConfig(BaseModel):
@@ -150,30 +165,41 @@ _ENV_PATTERN = re.compile(r"\$\{(\w+)\}")
 
 def resolve_env_vars(raw: str) -> str:
     """Replace ${VAR_NAME} placeholders with environment variable values."""
-    return _ENV_PATTERN.sub(lambda m: os.environ.get(m.group(1), ""), raw)
+    def _replace(m: re.Match[str]) -> str:
+        name = m.group(1)
+        value = os.environ.get(name, "")
+        if not value:
+            _logger.warning("environment variable %s is not set, using empty string", name)
+        return value
+    return _ENV_PATTERN.sub(_replace, raw)
 
 
 # ── YAML Config Loader ────────────────────────────────────────────
+
+def _parse_yaml_config(resolved_yaml: str) -> Config:
+    """Parse resolved YAML string into a Config object."""
+    from ruamel.yaml import YAML  # type: ignore[import-untyped]
+    yml = YAML()
+    data: dict[str, Any] | None = yml.load(resolved_yaml)  # type: ignore[assignment]
+    if data is None:
+        data = {}
+    return Config(**data)
+
 
 def load_config(path: str) -> Config:
     """Load YAML config, resolve ${ENV} vars, validate schema and model references."""
     raw = Path(path).read_text(encoding="utf-8")
     resolved = resolve_env_vars(raw)
-    from ruamel.yaml import YAML  # type: ignore[import-untyped]
-    yml = YAML()
-    data = yml.load(resolved)
-    if data is None:
-        data = {}
-    cfg = Config(**data)
+    cfg = _parse_yaml_config(resolved)
     validate_model_references(cfg)
     return cfg
 
 
 def validate_model_references(cfg: Config) -> None:
     """Cross-section validation: all model references must exist in some provider."""
-    all_models = {m for p in cfg.providers.values() for m in p.models}
-    if not all_models:
+    if not cfg.providers:
         return  # No providers defined, skip validation
+    all_models = {m for p in cfg.providers.values() for m in p.models}
 
     if cfg.routing.default_model not in all_models:
         raise ValueError(
@@ -188,11 +214,11 @@ def validate_model_references(cfg: Config) -> None:
         )
 
     for rule in cfg.routing.rules:
-        if rule.model not in all_models:
+        if rule.model != "__dynamic__" and rule.model not in all_models:
             raise ValueError(
                 f"rule '{rule.name}' references unknown model '{rule.model}'"
             )
-        if rule.fallback_model and rule.fallback_model not in all_models:
+        if rule.fallback_model and rule.fallback_model != "__dynamic__" and rule.fallback_model not in all_models:
             raise ValueError(
                 f"rule '{rule.name}' fallback_model references unknown model "
                 f"'{rule.fallback_model}'"
@@ -240,12 +266,7 @@ def _reload_config() -> Config | None:
         finally:
             _unlock(f)
     resolved = resolve_env_vars(raw)
-    from ruamel.yaml import YAML  # type: ignore[import-untyped]
-    yml = YAML()
-    data = yml.load(resolved)
-    if data is None:
-        data = {}
-    cfg = Config(**data)
+    cfg = _parse_yaml_config(resolved)
     validate_model_references(cfg)
     _config = cfg
     _config_mtime = mtime

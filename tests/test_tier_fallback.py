@@ -5,9 +5,9 @@ from typing import Any
 
 import pytest
 
-from llm_router import fallback
-from llm_router.config import Settings
-from llm_router.translator import anthropic_to_openai
+from app import fallback
+from app.config import Config, CircuitBreakerConfig, FallbackConfig
+from app.translator import anthropic_to_openai
 
 
 # ── Fixtures ────────────────────────────────────────────────────
@@ -50,12 +50,16 @@ def _reset_health_state():  # pyright: ignore[reportUnusedFunction]
 
 @pytest.fixture(autouse=True)
 def _mock_settings(monkeypatch: pytest.MonkeyPatch):  # pyright: ignore[reportUnusedFunction]
-    """Provide deterministic settings for all tests."""
-    settings = Settings(
-        fallback_failure_threshold=3,
-        fallback_recovery_seconds=300,
+    """Provide deterministic config for all tests."""
+    cfg = Config(
+        fallback=FallbackConfig(
+            circuit_breaker=CircuitBreakerConfig(
+                failure_threshold=3,
+                recovery_seconds=300,
+            ),
+        ),
     )
-    monkeypatch.setattr("llm_router.fallback.get_settings", lambda: settings)
+    monkeypatch.setattr("app.fallback.get_config", lambda: cfg)
 
 
 def _make_all_unhealthy(models: list[str]) -> None:
@@ -321,15 +325,15 @@ class TestAnthropicToOpenaiGpt5:
         assert result["max_completion_tokens"] == 2048
         assert "max_tokens" not in result
 
-    def test_gpt41_uses_max_tokens(self):
+    def test_gpt41_uses_max_completion_tokens(self):
         body: dict[str, Any] = {
             "model": "claude-opus-4-6",
             "messages": [{"role": "user", "content": "hello"}],
             "max_tokens": 4096,
         }
         result = anthropic_to_openai(body, "gpt-4.1")
-        assert result["max_tokens"] == 4096
-        assert "max_completion_tokens" not in result
+        assert result["max_completion_tokens"] == 4096
+        assert "max_tokens" not in result
 
     def test_no_max_tokens_neither_key_present(self):
         body: dict[str, Any] = {
