@@ -858,7 +858,7 @@ async def _oai_stream_proxy(
             url = registry.get_request_url(current_model)
             hdrs = registry.get_request_headers(current_model)
 
-            req_body: dict[str, Any] = {**body, "model": current_model, "stream": True}
+            req_body: dict[str, Any] = {**body, "model": current_model, "stream": True, "stream_options": {"include_usage": True}}
             if current_model.startswith(_NEW_API_PREFIXES) and "max_tokens" in req_body:
                 req_body["max_completion_tokens"] = req_body.pop("max_tokens")
 
@@ -886,6 +886,7 @@ async def _oai_stream_proxy(
 
                 has_text_content = False
                 last_finish_reason = None
+                output_tokens = 0
 
                 if text.startswith("data: ") or "\ndata: " in text:
                     # SSE format — process line by line
@@ -900,7 +901,7 @@ async def _oai_stream_proxy(
                                 if inject_cfg["enabled"] and has_text_content and last_finish_reason != "tool_calls":
                                     elapsed = time.monotonic() - t0
                                     reason = route.reason if attempt == 0 else f"fallback:{route.model}→{current_model}"
-                                    wm = metadata.format_line(current_model, elapsed, 0, reason,
+                                    wm = metadata.format_line(current_model, elapsed, output_tokens, reason,
                                         include_model=inject_cfg.get("include_model", True),
                                         include_elapsed=inject_cfg.get("include_elapsed", True),
                                         include_tokens=inject_cfg.get("include_tokens", False),
@@ -927,6 +928,11 @@ async def _oai_stream_proxy(
                                     fr = ch_choices[0].get("finish_reason")
                                     if fr is not None:
                                         last_finish_reason = fr
+                                ch_usage = chunk.get("usage")
+                                if isinstance(ch_usage, dict):
+                                    ct = ch_usage.get("completion_tokens", 0)
+                                    if isinstance(ct, int) and ct > 0:
+                                        output_tokens = ct
                                 if "candidates" in chunk:
                                     converted = _convert_vertex_sse_line(payload, current_model)
                                     yield f"data: {converted}\n\n"
@@ -971,10 +977,16 @@ async def _oai_stream_proxy(
                         finish_reason_value = first_choice.get("finish_reason", "stop")
                         finish_reason = finish_reason_value if isinstance(finish_reason_value, str) else "stop"
 
+                        burst_usage = oai_resp.get("usage")
+                        if isinstance(burst_usage, dict):
+                            bt = burst_usage.get("completion_tokens", 0)
+                            if isinstance(bt, int) and bt > 0:
+                                output_tokens = bt
+
                         if inject_cfg["enabled"] and finish_reason != "tool_calls" and content:
                             elapsed = time.monotonic() - t0
                             reason = route.reason if attempt == 0 else f"fallback:{route.model}→{current_model}"
-                            wm = metadata.format_line(current_model, elapsed, 0, reason,
+                            wm = metadata.format_line(current_model, elapsed, output_tokens, reason,
                                 include_model=inject_cfg.get("include_model", True),
                                 include_elapsed=inject_cfg.get("include_elapsed", True),
                                 include_tokens=inject_cfg.get("include_tokens", False),
@@ -992,14 +1004,14 @@ async def _oai_stream_proxy(
             break  # success
 
         oai_stream_elapsed = time.monotonic() - t0
-        performance.get_tracker().record(current_model, oai_stream_elapsed * 1000, 0, True)
+        performance.get_tracker().record(current_model, oai_stream_elapsed * 1000, output_tokens, True)
         actual_reason = route.reason if current_model == route.model else f"fallback:{route.model}→{current_model}"
         stats_entry: dict[str, Any] = {
             "model_requested": body.get("model", ""),
             "model_routed": current_model,
             "route_reason": actual_reason,
             "elapsed_ms": int(oai_stream_elapsed * 1000),
-            "output_tokens": 0,
+            "output_tokens": output_tokens,
             "route_level": route.level,
             "session_key": route.session_key,
         }
